@@ -7,6 +7,8 @@ const ordersRouter = require("./routes/orders");
 const productsRouter = require("./routes/products");
 const reportsRouter = require("./routes/reports");
 const reportChatRouter = require("./routes/reportChat");
+const exportRouter = require("./routes/exportCsv");
+
 const app = express();
 
 app.use(cors());
@@ -26,6 +28,7 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/reports", reportsRouter);
+app.use("/api/export", exportRouter);
 app.use("/api/report-chat", reportChatRouter);
 
 
