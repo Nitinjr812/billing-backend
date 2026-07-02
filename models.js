@@ -58,8 +58,8 @@ const alertSchema = {
   alertId: String,
   shopId: String,
   productId: String,
-  type: String,            // "low_stock", "out_of_stock", "slow_moving"
-  severity: String,        // "critical", "warning", "info"
+  type: String,             
+  severity: String,        
   message: String,
   resolved: Boolean,
   createdAt: Date,
