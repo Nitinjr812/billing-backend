@@ -4,9 +4,13 @@ const OpenAI = require("openai");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// ── Groq (FREE, OpenAI-compatible) ───────────────────────────────────────
+const openai = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1",
+});
 
-// ── Smart analysis engine (UNCHANGED — same as before) ──────────────────
+// ── Smart analysis engine (UNCHANGED) ─────────────────────────────────────
 async function analyzeBusinessData() {
   const [orders, products] = await Promise.all([
     Order.find().sort({ date: -1 }),
@@ -47,13 +51,78 @@ async function analyzeBusinessData() {
   };
 }
 
-// ── OLD keyword-based reply (KEPT as fallback only) ──────────────────────
+// ── OLD keyword-based reply (fallback, agar Groq bhi fail ho) ────────────
 function generateReply(userMsg, d) {
-  // ...tumhara purana wala code yahan waise hi rehne do (copy-paste kar dena)
-  // isse touch nahi karna, bas fallback ke liye use hoga
+  const msg = userMsg.toLowerCase();
+
+  if (msg.includes("restock") || msg.includes("stock") || msg.includes("inventory")) {
+    const lines = [];
+    if (d.outOfStock.length) {
+      lines.push(`🚨 Out of Stock — Order immediately:\n${d.outOfStock.map((p) => `  • ${p.name} (₹${p.price?.toLocaleString("en-IN")})`).join("\n")}`);
+    }
+    if (d.lowStock.length) {
+      lines.push(`⚠️ Low Stock — Restock soon:\n${d.lowStock.map((p) => `  • ${p.name}: only ${p.stock} units remaining`).join("\n")}`);
+    }
+    const urgentFast = d.fastGrowing.filter((p) => p.stock < 100);
+    if (urgentFast.length) {
+      lines.push(`📈 Fast growing + low stock — Priority restock:\n${urgentFast.map((p) => `  • ${p.name}: +${p.growthPercent}% growth, ${p.stock} units left`).join("\n")}`);
+    }
+    if (!lines.length) lines.push("✅ All products are well stocked. No restocking needed right now.");
+    return lines.join("\n\n");
+  }
+
+  if (msg.includes("offer") || msg.includes("discount") || msg.includes("sale") || msg.includes("slow")) {
+    const lines = [];
+    if (d.slowMoving.length) {
+      lines.push(`💸 Slow-moving products — Consider running offers:\n${d.slowMoving.map((p) => {
+        const rev = d.revenueByProduct[p.name] || 0;
+        const discount = p.price > 2000 ? "15%" : "10%";
+        return `  • ${p.name}: only ${d.ordersByProduct[p.name] || 0} orders, ₹${rev.toLocaleString("en-IN")} revenue → suggest ${discount} discount`;
+      }).join("\n")}`);
+    }
+    if (d.outOfStock.length) {
+      lines.push(`🎯 Run a flash sale on these after restocking:\n${d.outOfStock.map((p) => `  • ${p.name} — high demand expected`).join("\n")}`);
+    }
+    const topProduct = Object.entries(d.revenueByProduct).sort((a, b) => b[1] - a[1])[0];
+    if (topProduct) {
+      lines.push(`🏆 Top seller "${topProduct[0]}" — try a bundle deal to boost revenue further. Current revenue: ₹${topProduct[1].toLocaleString("en-IN")}.`);
+    }
+    if (!lines.length) lines.push("📊 All products are performing well. No special offers needed at this time.");
+    return lines.join("\n\n");
+  }
+
+  if (msg.includes("cancel") || msg.includes("cancellation")) {
+    const lines = [];
+    lines.push(`🚫 Cancellation Rate: ${d.cancellationRate}%`);
+    if (d.cancellationRate > 10) {
+      lines.push(`❌ Cancellation rate is very high! ${d.cancelled} orders cancelled.\nPlease check: delivery delays, payment issues, or product quality.`);
+    } else if (d.cancellationRate > 5) {
+      lines.push(`⚠️ Cancellation rate is slightly high. ${d.cancelled} orders cancelled.\nSuggestion: Send order confirmation SMS/email and provide estimated delivery time.`);
+    } else {
+      lines.push(`✅ Cancellation rate is within normal range. ${d.cancelled} orders cancelled.`);
+    }
+    return lines.join("\n\n");
+  }
+
+  if (msg.includes("revenue") || msg.includes("earning") || msg.includes("income") || msg.includes("sales")) {
+    const topProducts = Object.entries(d.revenueByProduct).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    return `💰 Total Revenue: ₹${d.totalRevenue.toLocaleString("en-IN")}\n\n🏆 Top Revenue Products:\n${topProducts.map(([name, rev], i) => `  ${i + 1}. ${name}: ₹${rev.toLocaleString("en-IN")} (${d.ordersByProduct[name]} orders)`).join("\n")}\n\n📦 Orders: ${d.total} total | ${d.delivered} delivered | ${d.pending} pending`;
+  }
+
+  if (msg.includes("order") || msg.includes("pending") || msg.includes("deliver")) {
+    return `📦 Order Summary:\n\n  • Total: ${d.total}\n  • ✅ Delivered: ${d.delivered}\n  • ⏳ Pending: ${d.pending}\n  • 🔄 Processing: ${d.processing}\n  • ❌ Cancelled: ${d.cancelled}\n\n${d.pending > 10 ? `⚠️ ${d.pending} orders are still pending — follow up required!` : "✅ Pending orders are manageable."}`;
+  }
+
+  const urgentItems = [];
+  if (d.outOfStock.length) urgentItems.push(`🚨 ${d.outOfStock.length} products out of stock`);
+  if (d.lowStock.length) urgentItems.push(`⚠️ ${d.lowStock.length} products low on stock`);
+  if (d.cancellationRate > 5) urgentItems.push(`❌ Cancellation rate ${d.cancellationRate}% — needs attention`);
+  if (d.slowMoving.length) urgentItems.push(`💸 ${d.slowMoving.length} slow-moving products — consider running offers`);
+
+  return `📊 Business Snapshot:\n\n  • Revenue: ₹${d.totalRevenue.toLocaleString("en-IN")}\n  • Orders: ${d.total} (${d.delivered} delivered)\n  • Cancellation Rate: ${d.cancellationRate}%\n\n${urgentItems.length ? `🔔 Action Items:\n${urgentItems.map((i) => `  ${i}`).join("\n")}` : "✅ Business is running smoothly!"}`;
 }
 
-// ── Build a compact context summary for GPT (avoid sending raw arrays) ───
+// ── Build compact context for AI ──────────────────────────────────────────
 function buildContextSummary(d) {
   const topProducts = Object.entries(d.revenueByProduct)
     .sort((a, b) => b[1] - a[1])
@@ -74,12 +143,12 @@ Business Snapshot:
 `.trim();
 }
 
-// ── Real ChatGPT reply, grounded in real inventory/order data ────────────
+// ── AI reply via Groq (FREE) ───────────────────────────────────────────────
 async function getAIReply(userMsg, d) {
   const context = buildContextSummary(d);
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini", // sasta aur fast, chahe toh gpt-4o bhi use kar sakte ho
+    model: "llama-3.3-70b-versatile",
     messages: [
       {
         role: "system",
@@ -104,8 +173,8 @@ router.post("/", async (req, res) => {
     try {
       reply = await getAIReply(message, data);
     } catch (aiErr) {
-      console.error("OpenAI error, falling back to rule-based:", aiErr.message);
-      reply = generateReply(message, data); // OpenAI down ho toh bhi chatbot chalega
+      console.error("AI error, falling back to rule-based:", aiErr.message);
+      reply = generateReply(message, data);
     }
     res.json({ reply });
   } catch (err) {
