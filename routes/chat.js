@@ -51,7 +51,7 @@ async function analyzeBusinessData() {
   };
 }
 
-// ── OLD keyword-based reply (fallback, agar Groq bhi fail ho) ────────────
+// ── OLD keyword-based reply (fallback, jab Groq bhi fail ho) ─────────────
 function generateReply(userMsg, d) {
   const msg = userMsg.toLowerCase();
 
@@ -170,13 +170,22 @@ router.post("/", async (req, res) => {
   try {
     const data = await analyzeBusinessData();
     let reply;
+    let usedFallback = false;
+
     try {
       reply = await getAIReply(message, data);
     } catch (aiErr) {
-      console.error("AI error, falling back to rule-based:", aiErr.message);
+      usedFallback = true;
+      // ── DETAILED LOGGING — isse Vercel logs me exact wajah dikhegi ──
+      console.error("AI error →", {
+        status: aiErr.status,
+        code: aiErr.code,
+        message: aiErr.message,
+      });
       reply = generateReply(message, data);
     }
-    res.json({ reply });
+
+    res.json({ reply, usedFallback }); // usedFallback frontend me bhi dikh sakta hai debug ke liye
   } catch (err) {
     console.error("Chat error:", err.message);
     res.status(500).json({ error: "Analysis failed" });
