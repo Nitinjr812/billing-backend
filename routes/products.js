@@ -35,6 +35,7 @@ router.post("/", async (req, res) => {
 });
 
 // PATCH update stock
+
 router.patch("/:id/stock", async (req, res) => {
     try {
         const product = await Product.findByIdAndUpdate(
