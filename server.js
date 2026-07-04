@@ -12,6 +12,7 @@ const productsRouter = require("./routes/products");
 const reportsRouter = require("./routes/reports");
 const reportChatRouter = require("./routes/reportChat");
 const authRouter = require("./routes/auth");
+const settingsRouter = require("./routes/settings");
 
 const app = express();
 
@@ -63,7 +64,8 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/reports", reportsRouter);
-app.use("/api/report-chat", reportChatRouter); 
+app.use("/api/report-chat", reportChatRouter);
+app.use("/api/settings", settingsRouter); 
 app.use("/api/auth", authRouter); 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
