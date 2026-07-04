@@ -11,6 +11,7 @@ const ordersRouter = require("./routes/orders");
 const productsRouter = require("./routes/products");
 const reportsRouter = require("./routes/reports");
 const reportChatRouter = require("./routes/reportChat");
+const authRouter = require("./routes/auth");
 
 const app = express();
 
@@ -63,6 +64,7 @@ app.use("/api/products", productsRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/reports", reportsRouter);
 app.use("/api/report-chat", reportChatRouter); 
+app.use("/api/auth", authRouter); 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("Error:", err.message);
