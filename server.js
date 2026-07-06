@@ -14,7 +14,7 @@ const reportChatRouter = require("./routes/reportChat");
 const authRouter = require("./routes/auth");
 const settingsRouter = require("./routes/settings");
 const voiceProductRouter = require("./routes/voiceProduct");
-
+const voiceInvoiceRoute = require("./routes/voiceInvoice");
 const app = express();
 
 // ── MIDDLEWARE ──────────────────────────────────────────────────────────
@@ -68,7 +68,8 @@ app.use("/api/reports", reportsRoute);
 app.use("/api/report-chat", reportChatRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/auth", authRouter);
-app.use("/api/voice-product", voiceProductRouter);      
+app.use("/api/voice-product", voiceProductRouter);     
+app.use("/api/voice-invoice", voiceInvoiceRoute); 
 
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
