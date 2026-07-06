@@ -9,10 +9,11 @@ const multiShopRouter = require("./multiShopRouter");
 const chatRouter = require("./routes/chat");
 const ordersRouter = require("./routes/orders");
 const productsRouter = require("./routes/products");
-const reportsRoute = require("./routes/reports"); 
+const reportsRoute = require("./routes/reports");
 const reportChatRouter = require("./routes/reportChat");
 const authRouter = require("./routes/auth");
 const settingsRouter = require("./routes/settings");
+const voiceProductRouter = require("./routes/voiceProduct");
 
 const app = express();
 
@@ -65,8 +66,11 @@ app.use("/api/products", productsRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api/reports", reportsRoute);
 app.use("/api/report-chat", reportChatRouter);
-app.use("/api/settings", settingsRouter); 
-app.use("/api/auth", authRouter); 
+app.use("/api/settings", settingsRouter);
+app.use("/api/auth", authRouter);
+app.use("/api/voice-product", voiceProductRouter);      
+
+
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("Error:", err.message);
