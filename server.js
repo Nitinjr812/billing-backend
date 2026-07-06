@@ -15,6 +15,7 @@ const authRouter = require("./routes/auth");
 const settingsRouter = require("./routes/settings");
 const voiceProductRouter = require("./routes/voiceProduct");
 const voiceInvoiceRoute = require("./routes/voiceInvoice");
+const invoicesRoute = require("./routes/invoices");
 const app = express();
 
 // ── MIDDLEWARE ──────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ app.get("/", (req, res) => {
       addProduct: "POST /api/shops/product/:shopId",
       addOrder: "POST /api/shops/order/:shopId",
       alerts: "/api/shops/alerts/:shopId",
+
     },
   });
 });
@@ -70,6 +72,7 @@ app.use("/api/settings", settingsRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/voice-product", voiceProductRouter);     
 app.use("/api/voice-invoice", voiceInvoiceRoute); 
+app.use("/api/invoices", invoicesRoute);    
 
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
