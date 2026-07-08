@@ -8,8 +8,8 @@ const userSchema = new mongoose.Schema({
   shopId: { type: String, required: true },
   phone: { type: String, default: "" },
   isVerified: { type: Boolean, default: false },
-  verificationToken: { type: String },
-  verificationTokenExpires: { type: Date },
+  otp: { type: String },
+  otpExpires: { type: Date },
   notificationSettings: {
     revenueAlerts: { type: Boolean, default: true },
     newOrders: { type: Boolean, default: true },
