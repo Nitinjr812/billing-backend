@@ -1,30 +1,22 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // Gmail App Password (16-digit), normal password nahi chalega
-  },
-});
-
-const sendVerificationEmail = async (toEmail, verifyLink) => {
-  await transporter.sendMail({
-    from: `"Billing App" <${process.env.EMAIL_USER}>`,
+const sendOTPEmail = async (toEmail, otp) => {
+  await resend.emails.send({
+    from: "Billing App <onboarding@resend.dev>",
     to: toEmail,
-    subject: "Verify your email",
+    subject: "Your verification code",
     html: `
       <div style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2>Verify your email</h2>
-        <p>Account activate karne ke liye niche diye link pe click karo. Link 24 hours valid hai.</p>
-        <a href="${verifyLink}" style="display:inline-block;padding:10px 20px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;">
-          Verify Email
-        </a>
-        <p>Agar button kaam na kare, is link ko copy karke browser me paste karo:</p>
-        <p>${verifyLink}</p>
+        <h2>Your OTP Code</h2>
+        <p>Yeh code 10 minutes ke liye valid hai:</p>
+        <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #4f46e5; margin: 16px 0;">
+          ${otp}
+        </div>
+        <p>Agar tumne yeh request nahi ki, is email ko ignore karo.</p>
       </div>
     `,
   });
 };
 
-module.exports = sendVerificationEmail;
+module.exports = sendOTPEmail;
