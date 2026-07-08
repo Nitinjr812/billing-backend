@@ -7,6 +7,9 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ["owner", "staff"], required: true },
   shopId: { type: String, required: true },
   phone: { type: String, default: "" },
+  isVerified: { type: Boolean, default: false },
+  verificationToken: { type: String },
+  verificationTokenExpires: { type: Date },
   notificationSettings: {
     revenueAlerts: { type: Boolean, default: true },
     newOrders: { type: Boolean, default: true },
