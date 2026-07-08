@@ -2,8 +2,9 @@ const express = require("express");
 const router = express.Router();
 const Invoice = require("../models/Invoice");
 const Product = require("../models/Product");
+const Order = require("../models/Order");
 
-// POST /api/invoices — create invoice + auto-decrement stock
+// POST /api/invoices — create invoice + auto-decrement stock + create real orders
 router.post("/", async (req, res) => {
   try {
     const { customerName, customerEmail, customerPhone, items, subtotal, total } = req.body;
@@ -16,13 +17,27 @@ router.post("/", async (req, res) => {
     const invoiceId = `INV-${Date.now().toString().slice(-8)}`;
 
     // Decrement stock for matching products (case-insensitive name match)
-    for (const item of items) {
+    // and create a real Order document per item, so the Orders page and
+    // Dashboard reflect this invoice immediately.
+    for (const [idx, item] of items.entries()) {
       const escaped = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const product = await Product.findOne({ name: { $regex: `^${escaped}$`, $options: "i" } });
+
       if (product) {
         product.stock = Math.max(0, product.stock - Number(item.qty));
         await product.save();
       }
+
+      const orderId = `${invoiceId}-${idx + 1}`;
+      await Order.create({
+        orderId,
+        customer: customerName,
+        amount: Number(item.qty) * Number(item.price),
+        status: "Pending",
+        product: item.name,
+        qty: Number(item.qty),
+        date: new Date(),
+      });
     }
 
     const invoice = new Invoice({
