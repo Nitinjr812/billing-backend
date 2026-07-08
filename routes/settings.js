@@ -128,4 +128,52 @@ router.put("/notifications", async (req, res) => {
   }
 });
 
+// ── DELETE Account ────────────────────────────────────────────────────────
+// - Staff: not allowed to self-delete. Owner must remove them via /team/:userId.
+// - Owner: deletes the owner's own User doc, ALL staff Users under the same
+//   shopId, and the Shop document itself (full shop teardown).
+router.delete("/account", async (req, res) => {
+  try {
+    const { userId, shopId, role } = req.user;
+
+    if (role === "staff") {
+      return res.status(403).json({
+        error: "Staff members can't delete their own account. Ask your shop owner to remove you from the team instead.",
+      });
+    }
+
+    if (role !== "owner") {
+      return res.status(400).json({ error: "Unrecognized role" });
+    }
+
+    const shop = await Shop.findOne({ shopId });
+    if (!shop) {
+      return res.status(404).json({ error: "Shop not found" });
+    }
+
+    // Safety check: only the actual owner of this shop can trigger the teardown
+    if (shop.ownerId.toString() !== userId.toString()) {
+      return res.status(403).json({ error: "You are not the owner of this shop" });
+    }
+
+    // Delete every user (owner + all staff) tied to this shop
+    await User.deleteMany({ shopId });
+
+    // Delete the shop itself
+    await Shop.deleteOne({ shopId });
+
+    // NOTE: Order and Product models currently have no shopId field, so they
+    // are NOT touched here to avoid accidentally wiping unrelated data.
+    // If/when you add shopId to those schemas, add the matching deleteMany
+    // calls here, e.g.:
+    // await Order.deleteMany({ shopId });
+    // await Product.deleteMany({ shopId });
+
+    res.json({ success: true, message: "Account and shop deleted successfully" });
+  } catch (err) {
+    console.error("Delete account error:", err.message);
+    res.status(500).json({ error: "Failed to delete account" });
+  }
+});
+
 module.exports = router;
