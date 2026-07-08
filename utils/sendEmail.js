@@ -1,20 +1,26 @@
 const axios = require("axios");
 
-const sendOTPEmail = async (toEmail, otp) => {
+const subjects = {
+  signup: "Verify your account",
+  login: "Your login code",
+  reset: "Reset your password",
+};
+
+const sendOTPEmail = async (toEmail, otp, purpose = "login") => {
   await axios.post(
     "https://api.brevo.com/v3/smtp/email",
     {
-      sender: { name: "Billing App", email: process.env.BREVO_SENDER_EMAIL }, // wahi email jo verify kiya
+      sender: { name: "Billing App", email: process.env.BREVO_SENDER_EMAIL },
       to: [{ email: toEmail }],
-      subject: "Your verification code",
+      subject: subjects[purpose] || "Your verification code",
       htmlContent: `
         <div style="font-family: Arial, sans-serif; padding: 20px;">
           <h2>Your OTP Code</h2>
-          <p>Yeh code 10 minutes ke liye valid hai:</p>
+          <p>This code is valid for 10 minutes:</p>
           <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #4f46e5; margin: 16px 0;">
             ${otp}
           </div>
-          <p>Agar tumne yeh request nahi ki, is email ko ignore karo.</p>
+          <p>If you didn't request this, please ignore this email.</p>
         </div>
       `,
     },

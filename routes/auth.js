@@ -46,13 +46,13 @@ router.post("/signup-owner", async (req, res) => {
 
     await Shop.create({ shopId, shopName, ownerId: user._id });
 
-    await sendOTPEmail(user.email, otp);
+    await sendOTPEmail(user.email, otp, "signup");
 
     res.json({
       success: true,
-      message: "OTP email pe bheja gaya hai. Verify karo.",
+      message: "OTP sent to your email. Please verify to continue.",
       email: user.email,
-      shopId, // owner ko dikhana hai — verify ke baad screen pe rakhna
+      shopId,
     });
   } catch (err) {
     console.error("Signup owner error:", err.message);
@@ -87,11 +87,11 @@ router.post("/signup-staff", async (req, res) => {
       otpExpires: otpExpiry(),
     });
 
-    await sendOTPEmail(user.email, otp);
+    await sendOTPEmail(user.email, otp, "signup");
 
     res.json({
       success: true,
-      message: "OTP email pe bheja gaya hai. Verify karo.",
+      message: "OTP sent to your email. Please verify to continue.",
       email: user.email,
     });
   } catch (err) {
@@ -109,7 +109,7 @@ router.post("/verify-signup-otp", async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     if (user.isVerified) return res.status(400).json({ error: "Already verified" });
     if (!user.otp || user.otp !== otp || user.otpExpires < Date.now()) {
-      return res.status(400).json({ error: "Invalid ya expired OTP" });
+      return res.status(400).json({ error: "Invalid or expired OTP" });
     }
 
     user.isVerified = true;
@@ -145,7 +145,7 @@ router.post("/login", async (req, res) => {
 
     if (!user.isVerified) {
       return res.status(403).json({
-        error: "Account abhi verify nahi hai. Pehle signup OTP verify karo.",
+        error: "Account is not verified yet. Please verify your signup OTP first.",
         needsSignupVerification: true,
         email: user.email,
       });
@@ -156,12 +156,12 @@ router.post("/login", async (req, res) => {
     user.otpExpires = otpExpiry();
     await user.save();
 
-    await sendOTPEmail(user.email, otp);
+    await sendOTPEmail(user.email, otp, "login");
 
     res.json({
       success: true,
       otpRequired: true,
-      message: "OTP email pe bheja gaya hai",
+      message: "OTP sent to your email",
       email: user.email,
     });
   } catch (err) {
@@ -178,7 +178,7 @@ router.post("/verify-login-otp", async (req, res) => {
 
     if (!user) return res.status(404).json({ error: "User not found" });
     if (!user.otp || user.otp !== otp || user.otpExpires < Date.now()) {
-      return res.status(400).json({ error: "Invalid ya expired OTP" });
+      return res.status(400).json({ error: "Invalid or expired OTP" });
     }
 
     user.otp = undefined;
@@ -197,7 +197,7 @@ router.post("/verify-login-otp", async (req, res) => {
   }
 });
 
-// ── RESEND OTP (works for both signup and login stage) ──────────────────
+// ── RESEND OTP (works for signup/login stage) ────────────────────────────
 router.post("/resend-otp", async (req, res) => {
   try {
     const { email } = req.body;
@@ -209,11 +209,60 @@ router.post("/resend-otp", async (req, res) => {
     user.otpExpires = otpExpiry();
     await user.save();
 
-    await sendOTPEmail(user.email, otp);
+    await sendOTPEmail(user.email, otp, "login");
     res.json({ success: true, message: "OTP resent" });
   } catch (err) {
     console.error("Resend OTP error:", err.message);
     res.status(500).json({ error: "Resend failed" });
+  }
+});
+
+// ── FORGOT PASSWORD — STEP 1: request OTP ───────────────────────────────
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(404).json({ error: "No account found with this email" });
+
+    const otp = generateOTP();
+    user.otp = otp;
+    user.otpExpires = otpExpiry();
+    await user.save();
+
+    await sendOTPEmail(user.email, otp, "reset");
+
+    res.json({ success: true, message: "OTP sent to your email", email: user.email });
+  } catch (err) {
+    console.error("Forgot password error:", err.message);
+    res.status(500).json({ error: "Request failed" });
+  }
+});
+
+// ── FORGOT PASSWORD — STEP 2: verify OTP + set new password ─────────────
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user.otp || user.otp !== otp || user.otpExpires < Date.now()) {
+      return res.status(400).json({ error: "Invalid or expired OTP" });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.otp = undefined;
+    user.otpExpires = undefined;
+    await user.save();
+
+    res.json({ success: true, message: "Password reset successful. Please login." });
+  } catch (err) {
+    console.error("Reset password error:", err.message);
+    res.status(500).json({ error: "Reset failed" });
   }
 });
 
