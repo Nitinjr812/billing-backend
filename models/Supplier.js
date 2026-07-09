@@ -4,11 +4,7 @@ const supplierSchema = new mongoose.Schema(
   {
     supplierId: { type: String, required: true, unique: true },
     name: { type: String, required: true },
-    category: {
-      type: String,
-      enum: ["Electronics", "Apparel", "Home Goods"],
-      required: true,
-    },
+    category: { type: String, required: true, trim: true },
     contact: { type: String, required: true },
     email: { type: String, default: "" },
     phone: { type: String, default: "" },
