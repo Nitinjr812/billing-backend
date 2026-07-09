@@ -34,8 +34,7 @@ router.post("/", async (req, res) => {
     }
 });
 
-// PATCH update stock
-
+// PATCH update stock only
 router.patch("/:id/stock", async (req, res) => {
     try {
         const product = await Product.findByIdAndUpdate(
@@ -43,6 +42,20 @@ router.patch("/:id/stock", async (req, res) => {
             { stock: req.body.stock },
             { new: true }
         );
+        res.json(product);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// PUT update any product fields (name, price, category, supplier, growthPercent, stock)
+router.put("/:id", async (req, res) => {
+    try {
+        const product = await Product.findByIdAndUpdate(req.params.id, req.body, {
+            new: true,
+            runValidators: true,
+        });
+        if (!product) return res.status(404).json({ error: "Product not found" });
         res.json(product);
     } catch (err) {
         res.status(400).json({ error: err.message });
