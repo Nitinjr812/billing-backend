@@ -58,10 +58,11 @@ router.post("/", async (req, res) => {
 
     await invoice.save();
 
-    // Send response to frontend first — user shouldn't wait for WhatsApp to finish
-    res.status(201).json(invoice);
-
-    // ── WhatsApp send (fire-and-forget, doesn't block or fail the invoice creation) ──
+    // ── WhatsApp send — MUST be awaited before responding.
+    // Serverless functions (Vercel) freeze/kill the process right after the
+    // response is sent, so any "fire and forget" code after res.json() may
+    // never actually finish running. We await it here instead, and wrap in
+    // try/catch so a WhatsApp failure never breaks invoice creation itself.
     if (invoice.customerPhone) {
       try {
         const pdfBuffer = generateInvoicePdfBuffer(invoice);
@@ -76,6 +77,8 @@ router.post("/", async (req, res) => {
         console.error("⚠️ WhatsApp send failed:", waErr.response?.data || waErr.message);
       }
     }
+
+    res.status(201).json(invoice);
   } catch (err) {
     console.error("Invoice creation error:", err.message);
     res.status(500).json({ error: err.message });
