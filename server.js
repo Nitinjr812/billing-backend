@@ -31,15 +31,61 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ── DATABASE CONNECTION ────────────────────────────────────────────────
-if (process.env.MONGO_URI) {
-  mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => console.log("MongoDB Connected 🚀"))
-    .catch((err) => console.log("MongoDB Error:", err));
-} else {
-  console.log("⚠️ Using in-memory data (MONGO_URI not set)");
+// ── DATABASE CONNECTION (serverless-safe: cache + reuse across invocations) ──
+// In serverless (Vercel), each cold start re-runs this file. Without caching,
+// a new connection attempt fires on every invocation, and requests that land
+// on a "connecting" instance can time out waiting (the buffering error you saw).
+// This caches the connection promise so concurrent/repeat invocations reuse it.
+let cachedConnectionPromise = null;
+
+function connectToDatabase() {
+  if (!process.env.MONGO_URI) {
+    console.log("⚠️ Using in-memory data (MONGO_URI not set)");
+    return null;
+  }
+
+  // Already connected — reuse it
+  if (mongoose.connection.readyState === 1) {
+    return Promise.resolve(mongoose.connection);
+  }
+
+  // Already connecting — reuse the in-flight promise instead of starting a new one
+  if (cachedConnectionPromise) {
+    return cachedConnectionPromise;
+  }
+
+  cachedConnectionPromise = mongoose
+    .connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 10000, // fail fast instead of hanging silently
+      socketTimeoutMS: 45000,
+    })
+    .then((conn) => {
+      console.log("MongoDB Connected 🚀");
+      return conn;
+    })
+    .catch((err) => {
+      console.error("MongoDB Error:", err.message);
+      cachedConnectionPromise = null; // allow retry on the next request
+      throw err;
+    });
+
+  return cachedConnectionPromise;
 }
+
+// Ensure a DB connection exists before handling any /api request.
+// (Static/home routes don't need this, so it's scoped to /api only.)
+app.use("/api", async (req, res, next) => {
+  if (!process.env.MONGO_URI) return next(); // in-memory mode, nothing to wait for
+  try {
+    await connectToDatabase();
+    next();
+  } catch (err) {
+    res.status(503).json({ error: "Database connection failed, please retry" });
+  }
+});
+
+// Kick off an initial connection attempt at cold start too (non-blocking)
+connectToDatabase();
 
 // ── ROUTES ─────────────────────────────────────────────────────────────
 
