@@ -6,8 +6,8 @@ const orderSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   status: {
     type: String,
-    enum: ["Delivered", "Pending", "Processing", "Cancelled"],
-    default: "Pending",
+    enum: ["Completed", "Pending", "Cancelled"],
+    default: "Completed",
   },
   product: { type: String, required: true },
   qty: { type: Number, default: 1 },
