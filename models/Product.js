@@ -15,7 +15,7 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
     growthPercent: { type: Number, default: 0 },
-    supplier: { type: String, default: "" }, /  / matches Supplier.name for linking
+    supplier: { type: String, default: "" }, // matches Supplier.name for linking
   },
   { timestamps: true }
 );
