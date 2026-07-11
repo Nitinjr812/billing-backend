@@ -7,11 +7,15 @@ const Order = require("../models/Order");
 // POST /api/invoices — create invoice + auto-decrement stock + create real orders
 router.post("/", async (req, res) => {
   try {
-    const { customerName, customerEmail, customerPhone, items, subtotal, total } = req.body;
+    const { customerName, customerEmail, customerPhone, items, subtotal, total, status } = req.body;
 
     if (!customerName || !items || !items.length) {
       return res.status(400).json({ error: "Customer name and items are required" });
     }
+
+    // Only allow known statuses; default to "Completed" for offline/in-person sales.
+    const ALLOWED_STATUSES = ["Completed", "Pending", "Cancelled"];
+    const orderStatus = ALLOWED_STATUSES.includes(status) ? status : "Completed";
 
     // Unique invoice ID — timestamp based, no race conditions
     const invoiceId = `INV-${Date.now().toString().slice(-8)}`;
@@ -33,7 +37,7 @@ router.post("/", async (req, res) => {
         orderId,
         customer: customerName,
         amount: Number(item.qty) * Number(item.price),
-        status: "Pending",
+        status: orderStatus,
         product: item.name,
         qty: Number(item.qty),
         date: new Date(),
