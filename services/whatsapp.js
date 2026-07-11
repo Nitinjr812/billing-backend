@@ -28,6 +28,7 @@ async function uploadMedia(pdfBuffer, filename = "invoice.pdf") {
 // 2) Send that media_id as a document message to the customer
 async function sendInvoiceDocument(toPhone, mediaId, filename, caption) {
   const to = normalizePhone(toPhone);
+  console.log(`📲 Sending WhatsApp document. Raw phone: "${toPhone}" -> Normalized: "${to}", mediaId: ${mediaId}`);
   const res = await axios.post(
     `${API_BASE}/messages`,
     {
@@ -38,6 +39,7 @@ async function sendInvoiceDocument(toPhone, mediaId, filename, caption) {
     },
     { headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" } }
   );
+  console.log("📩 Full WhatsApp API response:", JSON.stringify(res.data, null, 2));
   return res.data;
 }
 
