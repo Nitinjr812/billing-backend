@@ -1,6 +1,8 @@
 // backend/utils/generateInvoicePdf.js
 const { jsPDF } = require("jspdf");
 const autoTable = require("jspdf-autotable").default;
+const fs = require("fs");
+const path = require("path");
 
 const BRAND = {
   name: "Draftbill",
@@ -10,6 +12,22 @@ const BRAND = {
   grayRGB: [107, 114, 128],
   lightBgRGB: [245, 247, 250],
 };
+
+// Read the logo once from disk and cache its base64 form — jsPDF's addImage()
+// needs base64 data, not a file path.
+let cachedLogoBase64 = null;
+function getLogoBase64() {
+  if (cachedLogoBase64 !== null) return cachedLogoBase64;
+  try {
+    const logoPath = path.join(__dirname, "..", "assets", "logo.png");
+    const fileBuffer = fs.readFileSync(logoPath);
+    cachedLogoBase64 = `data:image/png;base64,${fileBuffer.toString("base64")}`;
+  } catch (e) {
+    console.error("⚠️ Could not load logo for PDF:", e.message);
+    cachedLogoBase64 = false; // false = "tried and failed", so we don't retry every time
+  }
+  return cachedLogoBase64;
+}
 
 // Same visual design as your frontend downloadInvoicePDF(), just returns a Buffer instead of triggering a browser download
 function generateInvoicePdfBuffer(invoice) {
@@ -23,15 +41,23 @@ function generateInvoicePdfBuffer(invoice) {
   doc.setFillColor(...BRAND.darkRGB);
   doc.rect(0, 0, pageWidth, 38, "F");
 
-  doc.setDrawColor(255, 255, 255);
-  doc.setLineWidth(0.6);
-  doc.roundedRect(margin, 9, 20, 20, 3, 3);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.setTextColor(255, 255, 255);
-  doc.text("DB", margin + 10, 21, { align: "center" });
+  const logoBase64 = getLogoBase64();
 
+  if (logoBase64) {
+    doc.addImage(logoBase64, margin, 9, 20, 20);
+  } else {
+    doc.setDrawColor(255, 255, 255);
+    doc.setLineWidth(0.6);
+    doc.roundedRect(margin, 9, 20, 20, 3, 3);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(255, 255, 255);
+    doc.text("DB", margin + 10, 21, { align: "center" });
+  }
+
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
+  doc.setTextColor(255, 255, 255);
   doc.text(BRAND.name, margin + 26, 18);
 
   doc.setFont("helvetica", "normal");
