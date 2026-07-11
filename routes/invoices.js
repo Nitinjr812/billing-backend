@@ -3,6 +3,8 @@ const router = express.Router();
 const Invoice = require("../models/Invoice");
 const Product = require("../models/Product");
 const Order = require("../models/Order");
+const { generateInvoicePdfBuffer } = require("../utils/generateInvoicePdf");
+const { sendInvoicePdfToWhatsapp } = require("../services/whatsapp");
 
 // POST /api/invoices — create invoice + auto-decrement stock + create real orders
 router.post("/", async (req, res) => {
@@ -56,7 +58,24 @@ router.post("/", async (req, res) => {
 
     await invoice.save();
 
+    // Send response to frontend first — user shouldn't wait for WhatsApp to finish
     res.status(201).json(invoice);
+
+    // ── WhatsApp send (fire-and-forget, doesn't block or fail the invoice creation) ──
+    if (invoice.customerPhone) {
+      try {
+        const pdfBuffer = generateInvoicePdfBuffer(invoice);
+        await sendInvoicePdfToWhatsapp(
+          pdfBuffer,
+          invoice.customerPhone,
+          invoice.invoiceId,
+          `Hi ${invoice.customerName}, here's your invoice. Total: Rs. ${invoice.total}`
+        );
+        console.log(`✅ Invoice ${invoice.invoiceId} sent on WhatsApp to ${invoice.customerPhone}`);
+      } catch (waErr) {
+        console.error("⚠️ WhatsApp send failed:", waErr.response?.data || waErr.message);
+      }
+    }
   } catch (err) {
     console.error("Invoice creation error:", err.message);
     res.status(500).json({ error: err.message });
