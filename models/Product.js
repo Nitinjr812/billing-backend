@@ -20,4 +20,7 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Powers .sort({ stock: 1 }) and the low-stock / out-of-stock alert queries
+productSchema.index({ stock: 1 });
+
 module.exports = mongoose.model("Product", productSchema);

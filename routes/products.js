@@ -3,9 +3,10 @@ const router = express.Router();
 const Product = require("../models/Product");
 
 // GET all products
+// .lean() skips mongoose document hydration → faster JSON responses
 router.get("/", async (req, res) => {
     try {
-        const products = await Product.find().sort({ stock: 1 });
+        const products = await Product.find().sort({ stock: 1 }).lean();
         res.json(products);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -15,8 +16,10 @@ router.get("/", async (req, res) => {
 // GET low stock alerts (stock < 50)
 router.get("/alerts", async (req, res) => {
     try {
-        const lowStock = await Product.find({ stock: { $gt: 0, $lt: 50 } }).sort({ stock: 1 });
-        const outOfStock = await Product.find({ stock: 0 });
+        const [lowStock, outOfStock] = await Promise.all([
+            Product.find({ stock: { $gt: 0, $lt: 50 } }).sort({ stock: 1 }).lean(),
+            Product.find({ stock: 0 }).lean(),
+        ]);
         res.json({ lowStock, outOfStock });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -28,7 +31,7 @@ router.post("/", async (req, res) => {
     try {
         if (req.body.name) {
             const escaped = req.body.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const existing = await Product.findOne({ name: { $regex: `^${escaped}$`, $options: "i" } });
+            const existing = await Product.findOne({ name: { $regex: `^${escaped}$`, $options: "i" } }).lean();
             if (existing) {
                 return res.status(400).json({
                     error: `"${req.body.name}" already exists (SKU: ${existing.productId}). Edit it instead of adding a duplicate.`,
@@ -71,7 +74,7 @@ router.put("/:id", async (req, res) => {
             const existing = await Product.findOne({
                 name: { $regex: `^${escaped}$`, $options: "i" },
                 _id: { $ne: req.params.id },
-            });
+            }).lean();
             if (existing) {
                 return res.status(400).json({
                     error: `"${req.body.name}" already exists (SKU: ${existing.productId}).`,

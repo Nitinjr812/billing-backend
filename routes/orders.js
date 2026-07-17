@@ -3,9 +3,16 @@ const router = express.Router();
 const Order = require("../models/Order");
 
 // GET all orders
+// - .lean() skips mongoose document hydration → much faster JSON responses
+// - .limit(500) caps how much data is sent/parsed on every dashboard poll
+//   (dashboard only needs recent history for its charts; raise/remove if
+//   you have a page elsewhere that genuinely needs full order history)
 router.get("/", async (req, res) => {
   try {
-    const orders = await Order.find().sort({ date: -1 });
+    const orders = await Order.find()
+      .sort({ date: -1 })
+      .limit(500)
+      .lean();
     res.json(orders);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -13,22 +20,37 @@ router.get("/", async (req, res) => {
 });
 
 // GET order summary stats
+// Combined into a single aggregation ($facet) instead of 5 separate
+// round-trips (4x countDocuments + 1x aggregate). Also dropped the
+// "Delivered"/"Processing" counts since those statuses don't exist
+// in the schema enum — they were always querying for 0 and wasting a
+// round-trip each time.
 router.get("/stats", async (req, res) => {
   try {
-    const total = await Order.countDocuments();
-    const delivered = await Order.countDocuments({ status: "Delivered" });
-    const pending = await Order.countDocuments({ status: "Pending" });
-    const processing = await Order.countDocuments({ status: "Processing" });
-    const cancelled = await Order.countDocuments({ status: "Cancelled" });
-
-    const revenueResult = await Order.aggregate([
-      { $match: { status: { $ne: "Cancelled" } } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
+    const [result] = await Order.aggregate([
+      {
+        $facet: {
+          total: [{ $count: "count" }],
+          byStatus: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
+          revenue: [
+            { $match: { status: { $ne: "Cancelled" } } },
+            { $group: { _id: null, total: { $sum: "$amount" } } },
+          ],
+        },
+      },
     ]);
 
-    const totalRevenue = revenueResult[0]?.total || 0;
+    const statusMap = Object.fromEntries(
+      (result.byStatus || []).map((s) => [s._id, s.count])
+    );
 
-    res.json({ total, delivered, pending, processing, cancelled, totalRevenue });
+    res.json({
+      total: result.total[0]?.count || 0,
+      completed: statusMap.Completed || 0,
+      pending: statusMap.Pending || 0,
+      cancelled: statusMap.Cancelled || 0,
+      totalRevenue: result.revenue[0]?.total || 0,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
