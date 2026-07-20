@@ -90,6 +90,14 @@ function generateInvoicePdfBuffer(invoice) {
   doc.setFontSize(11);
   doc.text(date, pageWidth - margin, y, { align: "right" });
 
+  // GSTIN (if the shop has one saved) — printed right below the invoice date
+  if (invoice.sellerGstin) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...BRAND.grayRGB);
+    doc.text(`GSTIN: ${invoice.sellerGstin}`, pageWidth - margin, y + 6, { align: "right" });
+  }
+
   y += 6;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
@@ -120,22 +128,52 @@ function generateInvoicePdfBuffer(invoice) {
     columnStyles: { 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" } },
   });
 
+  // ── Totals box (subtotal → discount → GST → grand total) ──
+  const hasDiscount = Number(invoice.discountAmount) > 0;
+  const hasGst = Number(invoice.gstAmount) > 0;
+
+  const rows = [{ label: "Subtotal", value: invoice.subtotal ?? invoice.total }];
+  if (hasDiscount) {
+    const dLabel = invoice.discountType === "percentage"
+      ? `Discount (${invoice.discountValue}%)`
+      : "Discount";
+    rows.push({ label: dLabel, value: -invoice.discountAmount });
+  }
+  if (hasGst) {
+    rows.push({ label: `GST (${invoice.gstRate}%)`, value: invoice.gstAmount });
+  }
+
   const finalY = doc.lastAutoTable.finalY + 8;
-  const boxW = 70;
+  const boxW = 78;
   const boxX = pageWidth - margin - boxW;
+  const rowH = 7;
+  const boxH = rows.length * rowH + 16;
 
   doc.setFillColor(...BRAND.lightBgRGB);
-  doc.roundedRect(boxX, finalY, boxW, 18, 2, 2, "F");
+  doc.roundedRect(boxX, finalY, boxW, boxH, 2, 2, "F");
 
+  let ry = finalY + 8;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(...BRAND.grayRGB);
-  doc.text("Total Amount", boxX + 6, finalY + 8);
+  doc.setFontSize(9.5);
+  rows.forEach((r) => {
+    doc.setTextColor(...BRAND.grayRGB);
+    doc.text(r.label, boxX + 6, ry);
+    doc.setTextColor(...BRAND.darkRGB);
+    const sign = r.value < 0 ? "-" : "";
+    doc.text(`${sign}Rs. ${Math.abs(r.value).toLocaleString("en-IN")}`, boxX + boxW - 6, ry, { align: "right" });
+    ry += rowH;
+  });
+
+  doc.setDrawColor(220, 220, 228);
+  doc.line(boxX + 6, ry - 3, boxX + boxW - 6, ry - 3);
 
   doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...BRAND.grayRGB);
+  doc.text("Grand Total", boxX + 6, ry + 4);
   doc.setFontSize(13);
   doc.setTextColor(...BRAND.accentRGB);
-  doc.text(`Rs. ${Number(invoice.total).toLocaleString("en-IN")}`, boxX + boxW - 6, finalY + 13, { align: "right" });
+  doc.text(`Rs. ${Number(invoice.total).toLocaleString("en-IN")}`, boxX + boxW - 6, ry + 5, { align: "right" });
 
   const pageHeight = doc.internal.pageSize.getHeight();
   doc.setDrawColor(230, 230, 235);
