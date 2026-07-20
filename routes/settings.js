@@ -128,6 +128,62 @@ router.put("/notifications", async (req, res) => {
   }
 });
 
+// ── GET Tax / GST settings ───────────────────────────────────────────────
+router.get("/tax", async (req, res) => {
+  try {
+    const shop = await Shop.findOne({ shopId: req.user.shopId });
+    if (!shop) return res.status(404).json({ error: "Shop not found" });
+
+    res.json({
+      gstin: shop.gstin || "",
+      defaultGstRate: shop.defaultGstRate ?? 18,
+    });
+  } catch (err) {
+    console.error("Tax settings fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch tax settings" });
+  }
+});
+
+// ── UPDATE Tax / GST settings (owner only) ───────────────────────────────
+router.put("/tax", requireRole("owner"), async (req, res) => {
+  try {
+    const { gstin, defaultGstRate } = req.body;
+
+    const update = {};
+
+    if (gstin !== undefined) {
+      const cleanGstin = gstin.trim().toUpperCase();
+      // GSTIN format: 15 chars — 2 digit state code, 10 char PAN, 1 entity code, 1 'Z', 1 checksum
+      const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+      if (cleanGstin !== "" && !gstinRegex.test(cleanGstin)) {
+        return res.status(400).json({ error: "Invalid GSTIN format" });
+      }
+      update.gstin = cleanGstin;
+    }
+
+    if (defaultGstRate !== undefined) {
+      const rate = Number(defaultGstRate);
+      if (isNaN(rate) || rate < 0 || rate > 100) {
+        return res.status(400).json({ error: "GST rate must be a number between 0 and 100" });
+      }
+      update.defaultGstRate = rate;
+    }
+
+    const shop = await Shop.findOneAndUpdate(
+      { shopId: req.user.shopId },
+      update,
+      { new: true }
+    );
+
+    if (!shop) return res.status(404).json({ error: "Shop not found" });
+
+    res.json({ success: true, gstin: shop.gstin, defaultGstRate: shop.defaultGstRate });
+  } catch (err) {
+    console.error("Tax settings update error:", err.message);
+    res.status(500).json({ error: "Failed to update tax settings" });
+  }
+});
+
 // ── DELETE Account ────────────────────────────────────────────────────────
 // - Staff: not allowed to self-delete. Owner must remove them via /team/:userId.
 // - Owner: deletes the owner's own User doc, ALL staff Users under the same

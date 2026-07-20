@@ -5,6 +5,8 @@ const shopSchema = new mongoose.Schema({
   shopName: { type: String, required: true },
   ownerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   createdAt: { type: Date, default: Date.now },
+  gstin: { type: String, default: "" },
+  defaultGstRate: { type: Number, default: 18 }
 });
 
 module.exports = mongoose.model("Shop", shopSchema);
