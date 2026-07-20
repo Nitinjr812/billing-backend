@@ -9,7 +9,17 @@ const { sendInvoicePdfToWhatsapp } = require("../services/whatsapp");
 // POST /api/invoices — create invoice + auto-decrement stock + create real orders
 router.post("/", async (req, res) => {
   try {
-    const { customerName, customerEmail, customerPhone, items, subtotal, total, status } = req.body;
+    const {
+      customerName,
+      customerEmail,
+      customerPhone,
+      items,
+      status,
+      discountType,
+      discountValue,
+      gstRate,
+      sellerGstin,
+    } = req.body;
 
     if (!customerName || !items || !items.length) {
       return res.status(400).json({ error: "Customer name and items are required" });
@@ -18,6 +28,30 @@ router.post("/", async (req, res) => {
     // Only allow known statuses; default to "Completed" for offline/in-person sales.
     const ALLOWED_STATUSES = ["Completed", "Pending", "Cancelled"];
     const orderStatus = ALLOWED_STATUSES.includes(status) ? status : "Completed";
+
+    // ── Pricing calculation — ALWAYS done server-side, never trust client math ──
+    const subtotal = items.reduce(
+      (sum, it) => sum + (Number(it.qty) || 0) * (Number(it.price) || 0),
+      0
+    );
+
+    const safeDiscountType = discountType === "percentage" ? "percentage" : "flat";
+    const safeDiscountValue = Math.max(0, Number(discountValue) || 0);
+
+    let discountAmount = 0;
+    if (safeDiscountType === "percentage") {
+      const clampedPct = Math.min(100, safeDiscountValue);
+      discountAmount = subtotal * (clampedPct / 100);
+    } else {
+      discountAmount = Math.min(subtotal, safeDiscountValue);
+    }
+
+    const taxableAmount = Math.max(0, subtotal - discountAmount);
+
+    const safeGstRate = Math.min(100, Math.max(0, Number(gstRate) || 0));
+    const gstAmount = taxableAmount * (safeGstRate / 100);
+
+    const total = Math.round((taxableAmount + gstAmount) * 100) / 100;
 
     // Unique invoice ID — timestamp based, no race conditions
     const invoiceId = `INV-${Date.now().toString().slice(-8)}`;
@@ -53,6 +87,12 @@ router.post("/", async (req, res) => {
       customerPhone,
       items,
       subtotal,
+      discountType: safeDiscountType,
+      discountValue: safeDiscountValue,
+      discountAmount,
+      gstRate: safeGstRate,
+      gstAmount,
+      sellerGstin: sellerGstin || "",
       total,
     });
 
