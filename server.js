@@ -17,6 +17,8 @@ const voiceProductRouter = require("./routes/voiceProduct");
 const voiceInvoiceRoute = require("./routes/voiceInvoice");
 const invoicesRoute = require("./routes/invoices");
 const suppliersRoute = require("./routes/suppliers");
+app.use("/api/notifications", require("./routes/notifications"));
+
 const app = express();
 
 // ── MIDDLEWARE ──────────────────────────────────────────────────────────
@@ -121,6 +123,7 @@ app.use("/api/voice-product", voiceProductRouter);
 app.use("/api/voice-invoice", voiceInvoiceRoute); 
 app.use("/api/invoices", invoicesRoute);    
 app.use("/api/suppliers", suppliersRoute);
+
 
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────

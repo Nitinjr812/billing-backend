@@ -1,6 +1,15 @@
 const express = require("express");
 const router = express.Router();
+const OpenAI = require("openai");
 const Product = require("../models/Product");
+const Order = require("../models/Order");
+
+// Same Groq setup pattern as chat.js
+const openai = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: "https://api.groq.com/openai/v1",
+    timeout: 15000,
+});
 
 // GET all products
 // .lean() skips mongoose document hydration → faster JSON responses
@@ -13,16 +22,76 @@ router.get("/", async (req, res) => {
     }
 });
 
-// GET low stock alerts (stock < 50)
+// GET low stock / out of stock / slow moving alerts
+// "Slow moving" reuses the exact same definition chat.js uses
+// (< 2 non-cancelled orders) so both features agree with each other.
 router.get("/alerts", async (req, res) => {
     try {
-        const [lowStock, outOfStock] = await Promise.all([
+        const [lowStock, outOfStock, allProducts, orders] = await Promise.all([
             Product.find({ stock: { $gt: 0, $lt: 50 } }).sort({ stock: 1 }).lean(),
             Product.find({ stock: 0 }).lean(),
+            Product.find().lean(),
+            Order.find().lean(),
         ]);
-        res.json({ lowStock, outOfStock });
+
+        const ordersByProduct = {};
+        for (const o of orders) {
+            if (o.status !== "Cancelled") {
+                ordersByProduct[o.product] = (ordersByProduct[o.product] || 0) + 1;
+            }
+        }
+
+        const slowMoving = allProducts.filter(
+            (p) => p.stock > 0 && (ordersByProduct[p.name] || 0) < 2
+        );
+
+        res.json({ lowStock, outOfStock, slowMoving });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/products/:id/suggestion
+// Given a single product (slow-moving / low-stock / out-of-stock), asks
+// Groq for one short, practical suggestion. Used by the Stock Alert popup
+// when the user clicks "OK" on a product card.
+router.post("/:id/suggestion", async (req, res) => {
+    try {
+        const product = await Product.findById(req.params.id).lean();
+        if (!product) return res.status(404).json({ error: "Product not found" });
+
+        const completion = await openai.chat.completions.create({
+            model: "llama-3.3-70b-versatile",
+            max_tokens: 200,
+            temperature: 0.6,
+            messages: [
+                {
+                    role: "system",
+                    content: `You are a practical retail business advisor built into a shop's inventory app.
+Given one product's details, give ONE short, specific, actionable suggestion (2-3 sentences max) to either move slow-moving stock or handle a restock smartly.
+Reply naturally in Hinglish (Hindi+English mix), like a helpful local business advisor would speak — no fluff, no generic advice, mention the actual numbers given.`,
+                },
+                {
+                    role: "user",
+                    content: `Product: ${product.name}
+Category: ${product.category}
+Price: ₹${product.price}
+Current Stock: ${product.stock}
+Growth: ${product.growthPercent}%
+
+Give a suggestion.`,
+                },
+            ],
+        });
+
+        const suggestion = completion.choices[0].message.content;
+        res.json({ suggestion });
+    } catch (err) {
+        console.error("Suggestion error:", err.message);
+        res.json({
+            suggestion:
+                "Is product ke liye ek chhota discount ya bundle offer try karo — stock move karne mein madad milegi.",
+        });
     }
 });
 
@@ -43,7 +112,6 @@ router.post("/", async (req, res) => {
         await product.save();
         res.status(201).json(product);
     } catch (err) {
-        // Mongoose duplicate key error (e.g. duplicate productId)
         if (err.code === 11000) {
             return res.status(400).json({ error: "A product with this SKU already exists." });
         }
