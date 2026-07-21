@@ -69,7 +69,7 @@ router.post("/:id/suggestion", async (req, res) => {
                     role: "system",
                     content: `You are a practical retail business advisor built into a shop's inventory app.
 Given one product's details, give ONE short, specific, actionable suggestion (2-3 sentences max) to either move slow-moving stock or handle a restock smartly.
-Reply naturally in Hinglish (Hindi+English mix), like a helpful local business advisor would speak — no fluff, no generic advice, mention the actual numbers given.`,
+Reply in clear, professional English — no fluff, no generic advice, mention the actual numbers given.`,
                 },
                 {
                     role: "user",
@@ -90,7 +90,7 @@ Give a suggestion.`,
         console.error("Suggestion error:", err.message);
         res.json({
             suggestion:
-                "Is product ke liye ek chhota discount ya bundle offer try karo — stock move karne mein madad milegi.",
+                "Try a small discount or bundle offer on this product — it should help move the stock.",
         });
     }
 });
