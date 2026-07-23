@@ -62,10 +62,10 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// POST /api/supplier-purchases — create a new purchase entry (khareeda hua maal)
+// POST /api/supplier-purchases — create a new purchase entry
 router.post("/", async (req, res) => {
   try {
-    const { supplier, description, amount, paidAmount, date } = req.body;
+    const { supplier, description, amount, paidAmount, date, dueDate } = req.body;
 
     if (!supplier || amount == null) {
       return res.status(400).json({ error: "Supplier and amount are required" });
@@ -84,6 +84,7 @@ router.post("/", async (req, res) => {
       amount: Number(amount),
       paidAmount: paidAmount != null ? Number(paidAmount) : 0,
       date: date || Date.now(),
+      dueDate: dueDate || null,
     });
 
     await purchase.save();
@@ -99,11 +100,12 @@ router.put("/:id", async (req, res) => {
     const purchase = await SupplierPurchase.findById(req.params.id);
     if (!purchase) return res.status(404).json({ error: "Purchase not found" });
 
-    const { description, amount, paidAmount, date } = req.body;
+    const { description, amount, paidAmount, date, dueDate } = req.body;
     if (description !== undefined) purchase.description = description;
     if (amount !== undefined) purchase.amount = Number(amount);
     if (paidAmount !== undefined) purchase.paidAmount = Number(paidAmount);
     if (date !== undefined) purchase.date = date;
+    if (dueDate !== undefined) purchase.dueDate = dueDate;
 
     await purchase.save(); // pre-save hook recalculates pending/status
     res.json(purchase);
@@ -126,6 +128,11 @@ router.put("/:id/pay", async (req, res) => {
 
     purchase.paidAmount += Number(amount);
     if (purchase.paidAmount > purchase.amount) purchase.paidAmount = purchase.amount;
+
+    // Fully paid off — clear the due date, nothing left to chase
+    if (purchase.paidAmount >= purchase.amount) {
+      purchase.dueDate = null;
+    }
 
     await purchase.save(); // pending/status auto-recalculated
     res.json(purchase);
