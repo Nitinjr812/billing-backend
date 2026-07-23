@@ -18,6 +18,7 @@ const voiceInvoiceRoute = require("./routes/voiceInvoice");
 const invoicesRoute = require("./routes/invoices");
 const suppliersRoute = require("./routes/suppliers");
 const notificationsRoute = require("./routes/notifications");
+const supplierPurchasesRouter = require("./routes/supplierPurchases");
 
 const app = express();
 
@@ -124,6 +125,7 @@ app.use("/api/voice-invoice", voiceInvoiceRoute);
 app.use("/api/invoices", invoicesRoute);    
 app.use("/api/suppliers", suppliersRoute);
 app.use("/api/notifications", notificationsRoute);
+app.use("/api/supplier-purchases", supplierPurchasesRouter);
 
 
 
