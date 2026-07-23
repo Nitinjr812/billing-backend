@@ -8,11 +8,12 @@ const supplierPurchaseSchema = new mongoose.Schema(
       ref: "Supplier",
       required: true,
     },
-    supplierName: { type: String, required: true }, // denormalized for fast reads
-    description: { type: String, default: "" }, // e.g. "24 gold chains, 5g each"
-    amount: { type: Number, required: true, min: 0 }, // total purchase value
+    supplierName: { type: String, required: true },
+    description: { type: String, default: "" },
+    amount: { type: Number, required: true, min: 0 },
     paidAmount: { type: Number, default: 0, min: 0 },
-    pendingAmount: { type: Number, default: 0 }, // auto-calculated below
+    pendingAmount: { type: Number, default: 0 },
+    dueDate: { type: Date, default: null },
     status: {
       type: String,
       enum: ["Paid", "Partially Paid", "Pending"],
@@ -23,8 +24,8 @@ const supplierPurchaseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Auto-calc pendingAmount + status before every save
-supplierPurchaseSchema.pre("save", function (next) {
+// Synchronous hook — no "next" argument needed at all
+supplierPurchaseSchema.pre("save", function () {
   this.pendingAmount = Math.max(0, this.amount - this.paidAmount);
 
   if (this.paidAmount <= 0) {
@@ -34,8 +35,6 @@ supplierPurchaseSchema.pre("save", function (next) {
   } else {
     this.status = "Partially Paid";
   }
-
-  next();
 });
 
 module.exports = mongoose.model("SupplierPurchase", supplierPurchaseSchema);
