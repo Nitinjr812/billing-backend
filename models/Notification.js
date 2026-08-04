@@ -4,18 +4,20 @@ const notificationSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["outOfStock", "lowStock", "slowMoving"],
+      enum: ["outOfStock", "lowStock", "slowMoving", "discountGiven"],
       required: true,
     },
-    productId: { type: String, required: true }, // matches Product.productId
-    productName: { type: String, required: true },
+    shopId: { type: String }, // future filtering ke liye, abhi optional
+    productId: { type: String }, // ab required nahi — discountGiven me nahi hoga
+    productName: { type: String },
+    invoiceId: { type: String },
+    staffName: { type: String },
     message: { type: String, required: true },
     read: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
-// Powers the "don't spam duplicate alerts" check in scan-stock
 notificationSchema.index({ productId: 1, type: 1, read: 1 });
 notificationSchema.index({ createdAt: -1 });
 

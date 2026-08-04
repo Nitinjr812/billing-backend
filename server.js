@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 require("dotenv").config();
 
 // Import routers
+const discountPermissionsRoute = require("./routes/discountPermissions");
 const multiShopRouter = require("./multiShopRouter");
 const chatRouter = require("./routes/chat");
 const ordersRouter = require("./routes/orders");
@@ -126,7 +127,7 @@ app.use("/api/invoices", invoicesRoute);
 app.use("/api/suppliers", suppliersRoute);
 app.use("/api/notifications", notificationsRoute);
 app.use("/api/supplier-purchases", supplierPurchasesRouter);
-
+app.use("/api/discount-permissions", discountPermissionsRoute);
 
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
