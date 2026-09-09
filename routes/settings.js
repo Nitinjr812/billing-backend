@@ -185,13 +185,22 @@ router.put("/tax", requireRole("owner"), async (req, res) => {
 });
 
 // ── GET Nav Permissions (owner + staff dono call karte hain) ────────────
+// ── GET Nav Permissions (owner + staff dono call karte hain) ────────────
 router.get("/nav-permissions", async (req, res) => {
   try {
+    // Kabhi bhi cache mat hone do — har baar fresh DB value chahiye
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+
     const shop = await Shop.findOne({ shopId: req.user.shopId });
     if (!shop) return res.status(404).json({ error: "Shop not found" });
 
+    console.log(
+      `[nav-permissions GET] shopId=${req.user.shopId} →`,
+      shop.navPermissions?.visibleToStaff
+    );
+
     res.json({
-      visibleToStaff: shop.navPermissions?.visibleToStaff || ["billing"],
+      visibleToStaff: shop.navPermissions?.visibleToStaff ?? ["billing"],
     });
   } catch (err) {
     console.error("Nav-permissions fetch error:", err.message);
@@ -208,28 +217,37 @@ router.put("/nav-permissions", requireRole("owner"), async (req, res) => {
       return res.status(400).json({ error: "visibleToStaff must be an array of strings" });
     }
 
-    // Sirf jaane-maane nav ids allow karo — garbage values save hone se bacha
     const ALLOWED_IDS = [
       "dashboard", "inventory", "billing", "customers",
       "suppliers", "stocks", "reports", "subscription",
     ];
     const cleaned = [...new Set(visibleToStaff.filter((id) => ALLOWED_IDS.includes(id)))];
 
+    console.log(
+      `[nav-permissions PUT] shopId=${req.user.shopId} incoming=`,
+      visibleToStaff, "cleaned=", cleaned
+    );
+
     const shop = await Shop.findOneAndUpdate(
       { shopId: req.user.shopId },
       { $set: { "navPermissions.visibleToStaff": cleaned } },
-      { new: true }
+      { new: true, runValidators: true }
     );
 
     if (!shop) return res.status(404).json({ error: "Shop not found" });
 
+    console.log(
+      `[nav-permissions PUT] saved doc _id=${shop._id} →`,
+      shop.navPermissions.visibleToStaff
+    );
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
     res.json({ visibleToStaff: shop.navPermissions.visibleToStaff });
   } catch (err) {
     console.error("Nav-permissions update error:", err.message);
     res.status(500).json({ error: "Failed to update access settings" });
   }
 });
-
 // ── DELETE Account ────────────────────────────────────────────────────────
 // - Staff: not allowed to self-delete. Owner must remove them via /team/:userId.
 // - Owner: deletes the owner's own User doc, ALL staff Users under the same
