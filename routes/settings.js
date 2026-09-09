@@ -184,6 +184,52 @@ router.put("/tax", requireRole("owner"), async (req, res) => {
   }
 });
 
+// ── GET Nav Permissions (owner + staff dono call karte hain) ────────────
+router.get("/nav-permissions", async (req, res) => {
+  try {
+    const shop = await Shop.findOne({ shopId: req.user.shopId });
+    if (!shop) return res.status(404).json({ error: "Shop not found" });
+
+    res.json({
+      visibleToStaff: shop.navPermissions?.visibleToStaff || ["billing"],
+    });
+  } catch (err) {
+    console.error("Nav-permissions fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch access settings" });
+  }
+});
+
+// ── UPDATE Nav Permissions (owner only) ──────────────────────────────────
+router.put("/nav-permissions", requireRole("owner"), async (req, res) => {
+  try {
+    const { visibleToStaff } = req.body;
+
+    if (!Array.isArray(visibleToStaff) || !visibleToStaff.every((v) => typeof v === "string")) {
+      return res.status(400).json({ error: "visibleToStaff must be an array of strings" });
+    }
+
+    // Sirf jaane-maane nav ids allow karo — garbage values save hone se bacha
+    const ALLOWED_IDS = [
+      "dashboard", "inventory", "billing", "customers",
+      "suppliers", "stocks", "reports", "subscription",
+    ];
+    const cleaned = [...new Set(visibleToStaff.filter((id) => ALLOWED_IDS.includes(id)))];
+
+    const shop = await Shop.findOneAndUpdate(
+      { shopId: req.user.shopId },
+      { $set: { "navPermissions.visibleToStaff": cleaned } },
+      { new: true }
+    );
+
+    if (!shop) return res.status(404).json({ error: "Shop not found" });
+
+    res.json({ visibleToStaff: shop.navPermissions.visibleToStaff });
+  } catch (err) {
+    console.error("Nav-permissions update error:", err.message);
+    res.status(500).json({ error: "Failed to update access settings" });
+  }
+});
+
 // ── DELETE Account ────────────────────────────────────────────────────────
 // - Staff: not allowed to self-delete. Owner must remove them via /team/:userId.
 // - Owner: deletes the owner's own User doc, ALL staff Users under the same
