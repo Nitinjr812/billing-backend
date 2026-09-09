@@ -185,67 +185,72 @@ router.put("/tax", requireRole("owner"), async (req, res) => {
 });
 
 // ── GET Nav Permissions (owner + staff dono call karte hain) ────────────
-// ── GET Nav Permissions (owner + staff dono call karte hain) ────────────
 router.get("/nav-permissions", async (req, res) => {
   try {
-    // Kabhi bhi cache mat hone do — har baar fresh DB value chahiye
     res.set("Cache-Control", "no-store, no-cache, must-revalidate");
 
-    const shop = await Shop.findOne({ shopId: req.user.shopId });
-    if (!shop) return res.status(404).json({ error: "Shop not found" });
+    if (req.user.role === "owner") {
+      return res.json({ visible: null }); // owner = hamesha full access
+    }
 
-    console.log(
-      `[nav-permissions GET] shopId=${req.user.shopId} →`,
-      shop.navPermissions?.visibleToStaff
-    );
+    const user = await User.findById(req.user.userId).select("navPermissions");
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-    res.json({
-      visibleToStaff: shop.navPermissions?.visibleToStaff ?? ["billing"],
-    });
+    res.json({ visible: user.navPermissions?.visible ?? [] });
   } catch (err) {
     console.error("Nav-permissions fetch error:", err.message);
     res.status(500).json({ error: "Failed to fetch access settings" });
   }
 });
 
-// ── UPDATE Nav Permissions (owner only) ──────────────────────────────────
-router.put("/nav-permissions", requireRole("owner"), async (req, res) => {
+// ── GET kisi specific staff member ki permissions (owner hi dekh sakta) ──
+router.get("/team/:userId/nav-permissions", requireRole("owner"), async (req, res) => {
   try {
-    const { visibleToStaff } = req.body;
+    const target = await User.findById(req.params.userId).select("navPermissions shopId role name");
+    if (!target || target.shopId !== req.user.shopId) {
+      return res.status(404).json({ error: "User not found in your shop" });
+    }
+    if (target.role === "owner") {
+      return res.status(400).json({ error: "Owner always has full access" });
+    }
 
-    if (!Array.isArray(visibleToStaff) || !visibleToStaff.every((v) => typeof v === "string")) {
-      return res.status(400).json({ error: "visibleToStaff must be an array of strings" });
+    res.json({ visible: target.navPermissions?.visible ?? [] });
+  } catch (err) {
+    console.error("Team nav-permissions fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch member's access settings" });
+  }
+});
+
+// ── UPDATE kisi specific staff member ki permissions (owner only) ───────
+router.put("/team/:userId/nav-permissions", requireRole("owner"), async (req, res) => {
+  try {
+    const { visible } = req.body;
+
+    if (!Array.isArray(visible) || !visible.every((v) => typeof v === "string")) {
+      return res.status(400).json({ error: "visible must be an array of strings" });
     }
 
     const ALLOWED_IDS = [
       "dashboard", "inventory", "billing", "customers",
       "suppliers", "stocks", "reports", "subscription",
     ];
-    const cleaned = [...new Set(visibleToStaff.filter((id) => ALLOWED_IDS.includes(id)))];
+    const cleaned = [...new Set(visible.filter((id) => ALLOWED_IDS.includes(id)))];
 
-    console.log(
-      `[nav-permissions PUT] shopId=${req.user.shopId} incoming=`,
-      visibleToStaff, "cleaned=", cleaned
-    );
+    const target = await User.findById(req.params.userId);
+    if (!target || target.shopId !== req.user.shopId) {
+      return res.status(404).json({ error: "User not found in your shop" });
+    }
+    if (target.role === "owner") {
+      return res.status(400).json({ error: "Cannot restrict the shop owner" });
+    }
 
-    const shop = await Shop.findOneAndUpdate(
-      { shopId: req.user.shopId },
-      { $set: { "navPermissions.visibleToStaff": cleaned } },
-      { new: true, runValidators: true }
-    );
+    target.navPermissions = { visible: cleaned };
+    await target.save();
 
-    if (!shop) return res.status(404).json({ error: "Shop not found" });
-
-    console.log(
-      `[nav-permissions PUT] saved doc _id=${shop._id} →`,
-      shop.navPermissions.visibleToStaff
-    );
-
-    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
-    res.json({ visibleToStaff: shop.navPermissions.visibleToStaff });
+    res.json({ visible: target.navPermissions.visible });
   } catch (err) {
-    console.error("Nav-permissions update error:", err.message);
-    res.status(500).json({ error: "Failed to update access settings" });
+    console.error("Team nav-permissions update error:", err.message);
+    res.status(500).json({ error: "Failed to update member's access settings" });
   }
 });
 // ── DELETE Account ────────────────────────────────────────────────────────
