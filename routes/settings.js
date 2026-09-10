@@ -224,17 +224,21 @@ router.get("/team/:userId/nav-permissions", requireRole("owner"), async (req, re
 // ── UPDATE kisi specific staff member ki permissions (owner only) ───────
 router.put("/team/:userId/nav-permissions", requireRole("owner"), async (req, res) => {
   try {
-    const { visible } = req.body;
+    // Dono naam accept karo (backward compatible) — jo bhi frontend bheje
+    const raw = req.body.visible ?? req.body.visibleToStaff ?? [];
 
-    if (!Array.isArray(visible) || !visible.every((v) => typeof v === "string")) {
-      return res.status(400).json({ error: "visible must be an array of strings" });
+    if (!Array.isArray(raw) || !raw.every((v) => typeof v === "string")) {
+      return res.status(400).json({
+        error: "visible must be an array of strings",
+        received: req.body, // debug ke liye — dikh jayega frontend kya bhej raha hai
+      });
     }
 
     const ALLOWED_IDS = [
       "dashboard", "inventory", "billing", "customers",
       "suppliers", "stocks", "reports", "subscription",
     ];
-    const cleaned = [...new Set(visible.filter((id) => ALLOWED_IDS.includes(id)))];
+    const cleaned = [...new Set(raw.filter((id) => ALLOWED_IDS.includes(id)))];
 
     const target = await User.findById(req.params.userId);
     if (!target || target.shopId !== req.user.shopId) {
