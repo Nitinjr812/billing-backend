@@ -257,6 +257,36 @@ router.put("/team/:userId/nav-permissions", requireRole("owner"), async (req, re
     res.status(500).json({ error: "Failed to update member's access settings" });
   }
 });
+// ── GET admin messages/offers (jo super admin ne bheje) ──────────────
+router.get("/admin-messages", async (req, res) => {
+  try {
+    const AdminMessage = require("../models/AdminMessage");
+    const messages = await AdminMessage.find({ shopId: req.user.shopId })
+      .sort({ createdAt: -1 })
+      .limit(20);
+    res.json(messages);
+  } catch (err) {
+    console.error("Admin messages fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+// ── MARK an admin message as read ─────────────────────────────────────
+router.put("/admin-messages/:id/read", async (req, res) => {
+  try {
+    const AdminMessage = require("../models/AdminMessage");
+    const msg = await AdminMessage.findOneAndUpdate(
+      { _id: req.params.id, shopId: req.user.shopId },
+      { read: true },
+      { new: true }
+    );
+    if (!msg) return res.status(404).json({ error: "Message not found" });
+    res.json({ success: true, message: msg });
+  } catch (err) {
+    console.error("Admin message read error:", err.message);
+    res.status(500).json({ error: "Failed to mark as read" });
+  }
+});
 // ── DELETE Account ────────────────────────────────────────────────────────
 // - Staff: not allowed to self-delete. Owner must remove them via /team/:userId.
 // - Owner: deletes the owner's own User doc, ALL staff Users under the same
