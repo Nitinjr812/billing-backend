@@ -20,7 +20,7 @@ const invoicesRoute = require("./routes/invoices");
 const suppliersRoute = require("./routes/suppliers");
 const notificationsRoute = require("./routes/notifications");
 const supplierPurchasesRouter = require("./routes/supplierPurchases");
-
+const superAdminRouter = require("./routes/superadmin");
 const app = express();
 
 // ── MIDDLEWARE ──────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ app.use("/api/suppliers", suppliersRoute);
 app.use("/api/notifications", notificationsRoute);
 app.use("/api/supplier-purchases", supplierPurchasesRouter);
 app.use("/api/discount-permissions", discountPermissionsRoute);
-
+app.use("/api/sa-x7k9q2", superAdminRouter);
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
