@@ -28,7 +28,7 @@ router.get("/", async (req, res) => {
       productId: n.productId,
       taskId: n.taskId,
       createdAt: n.createdAt,
-      read: n.readBy.some((id) => id.toString() === userId.toString()),
+      read: (n.readBy || []).some((id) => id.toString() === userId.toString()),
     }));
 
     const unreadCount = notifications.filter((n) => !n.read).length;
@@ -79,9 +79,6 @@ router.post("/scan-stock", async (req, res) => {
   try {
     const { shopId } = req.user;
 
-    // NOTE: Product/Order abhi shopId se linked nahi hain, isliye yeh
-    // scan pura catalog check karta hai (jaisa pehle karta tha) — sirf
-    // notification kisko jaayegi (is shop ke team ko) woh scoped hai.
     const [products, orders] = await Promise.all([Product.find().lean(), Order.find().lean()]);
 
     const ordersByProduct = {};
