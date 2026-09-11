@@ -35,13 +35,12 @@ app.use(cors({
   ],
   credentials: true,
 }));
+// Explicitly short-circuit every preflight request as early as possible,
+// before it can ever reach the DB-connection middleware below.
+app.options("*", cors());
 app.use(express.json());
 
 // ── DATABASE CONNECTION (serverless-safe: cache + reuse across invocations) ──
-// In serverless (Vercel), each cold start re-runs this file. Without caching,
-// a new connection attempt fires on every invocation, and requests that land
-// on a "connecting" instance can time out waiting (the buffering error you saw).
-// This caches the connection promise so concurrent/repeat invocations reuse it.
 let cachedConnectionPromise = null;
 
 function connectToDatabase() {
@@ -50,19 +49,17 @@ function connectToDatabase() {
     return null;
   }
 
-  // Already connected — reuse it
   if (mongoose.connection.readyState === 1) {
     return Promise.resolve(mongoose.connection);
   }
 
-  // Already connecting — reuse the in-flight promise instead of starting a new one
   if (cachedConnectionPromise) {
     return cachedConnectionPromise;
   }
 
   cachedConnectionPromise = mongoose
     .connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 10000, // fail fast instead of hanging silently
+      serverSelectionTimeoutMS: 8000, // stay safely under Vercel's function limit
       socketTimeoutMS: 45000,
     })
     .then((conn) => {
@@ -71,17 +68,19 @@ function connectToDatabase() {
     })
     .catch((err) => {
       console.error("MongoDB Error:", err.message);
-      cachedConnectionPromise = null; // allow retry on the next request
+      cachedConnectionPromise = null;
       throw err;
     });
 
   return cachedConnectionPromise;
 }
 
-// Ensure a DB connection exists before handling any /api request.
-// (Static/home routes don't need this, so it's scoped to /api only.)
+// Ensure a DB connection exists before handling any /api request —
+// EXCEPT preflight (OPTIONS), which never touches the DB and must return
+// instantly or Vercel kills the function before a CORS header goes out.
 app.use("/api", async (req, res, next) => {
-  if (!process.env.MONGO_URI) return next(); // in-memory mode, nothing to wait for
+  if (req.method === "OPTIONS") return next();
+  if (!process.env.MONGO_URI) return next();
   try {
     await connectToDatabase();
     next();
@@ -94,8 +93,6 @@ app.use("/api", async (req, res, next) => {
 connectToDatabase();
 
 // ── ROUTES ─────────────────────────────────────────────────────────────
-
-// Home
 app.get("/", (req, res) => {
   res.json({
     message: "Multi-Shop Billing Backend Running 🚀",
@@ -107,15 +104,11 @@ app.get("/", (req, res) => {
       addProduct: "POST /api/shops/product/:shopId",
       addOrder: "POST /api/shops/order/:shopId",
       alerts: "/api/shops/alerts/:shopId",
-
     },
   });
 });
 
-// ── MULTI-SHOP ROUTES (NEW) ────────────────────────────────────────────
 app.use("/api/shops", multiShopRouter);
-
-// ── LEGACY ROUTES (FOR COMPATIBILITY) ──────────────────────────────────
 app.use("/api/orders", ordersRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/chat", chatRouter);
@@ -123,15 +116,15 @@ app.use("/api/reports", reportsRoute);
 app.use("/api/report-chat", reportChatRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/auth", authRouter);
-app.use("/api/voice-product", voiceProductRouter);     
-app.use("/api/voice-invoice", voiceInvoiceRoute); 
-app.use("/api/invoices", invoicesRoute);    
+app.use("/api/voice-product", voiceProductRouter);
+app.use("/api/voice-invoice", voiceInvoiceRoute);
+app.use("/api/invoices", invoicesRoute);
 app.use("/api/suppliers", suppliersRoute);
 app.use("/api/notifications", notificationsRoute);
 app.use("/api/supplier-purchases", supplierPurchasesRouter);
 app.use("/api/discount-permissions", discountPermissionsRoute);
 app.use("/api/sa-x7k9q2", superAdminRouter);
- app.use("/api/tasks", tasksRouter);
+app.use("/api/tasks", tasksRouter);
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
