@@ -21,7 +21,7 @@ const suppliersRoute = require("./routes/suppliers");
 const notificationsRoute = require("./routes/notifications");
 const supplierPurchasesRouter = require("./routes/supplierPurchases");
 const superAdminRouter = require("./routes/superadmin");
-const tasksRouter = require("./routes/tasks")
+const tasksRouter = require("./routes/tasks");
 
 const app = express();
 
@@ -35,12 +35,13 @@ app.use(cors({
   ],
   credentials: true,
 }));
-// Explicitly short-circuit every preflight request as early as possible,
-// before it can ever reach the DB-connection middleware below.
-app.options("*", cors());
 app.use(express.json());
 
 // ── DATABASE CONNECTION (serverless-safe: cache + reuse across invocations) ──
+// In serverless (Vercel), each cold start re-runs this file. Without caching,
+// a new connection attempt fires on every invocation, and requests that land
+// on a "connecting" instance can time out waiting (the buffering error you saw).
+// This caches the connection promise so concurrent/repeat invocations reuse it.
 let cachedConnectionPromise = null;
 
 function connectToDatabase() {
@@ -49,10 +50,12 @@ function connectToDatabase() {
     return null;
   }
 
+  // Already connected — reuse it
   if (mongoose.connection.readyState === 1) {
     return Promise.resolve(mongoose.connection);
   }
 
+  // Already connecting — reuse the in-flight promise instead of starting a new one
   if (cachedConnectionPromise) {
     return cachedConnectionPromise;
   }
@@ -68,7 +71,7 @@ function connectToDatabase() {
     })
     .catch((err) => {
       console.error("MongoDB Error:", err.message);
-      cachedConnectionPromise = null;
+      cachedConnectionPromise = null; // allow retry on the next request
       throw err;
     });
 
@@ -77,10 +80,10 @@ function connectToDatabase() {
 
 // Ensure a DB connection exists before handling any /api request —
 // EXCEPT preflight (OPTIONS), which never touches the DB and must return
-// instantly or Vercel kills the function before a CORS header goes out.
+// instantly or Vercel can kill the function before a CORS header goes out.
 app.use("/api", async (req, res, next) => {
   if (req.method === "OPTIONS") return next();
-  if (!process.env.MONGO_URI) return next();
+  if (!process.env.MONGO_URI) return next(); // in-memory mode, nothing to wait for
   try {
     await connectToDatabase();
     next();
@@ -93,6 +96,8 @@ app.use("/api", async (req, res, next) => {
 connectToDatabase();
 
 // ── ROUTES ─────────────────────────────────────────────────────────────
+
+// Home
 app.get("/", (req, res) => {
   res.json({
     message: "Multi-Shop Billing Backend Running 🚀",
@@ -108,7 +113,10 @@ app.get("/", (req, res) => {
   });
 });
 
+// ── MULTI-SHOP ROUTES (NEW) ────────────────────────────────────────────
 app.use("/api/shops", multiShopRouter);
+
+// ── LEGACY ROUTES (FOR COMPATIBILITY) ──────────────────────────────────
 app.use("/api/orders", ordersRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/chat", chatRouter);
