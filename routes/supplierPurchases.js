@@ -2,12 +2,15 @@ const express = require("express");
 const router = express.Router();
 const SupplierPurchase = require("../models/SupplierPurchase");
 const Supplier = require("../models/Supplier");
+const { verifyToken } = require("../middleware/auth");
 
-// GET /api/supplier-purchases — all purchases (optionally filter by supplier)
+router.use(verifyToken); // ── har request ab shop-scoped hai ──
+
+// GET /api/supplier-purchases — all purchases for THIS shop (optionally filter by supplier)
 // Query param: ?supplier=<supplierObjectId>
 router.get("/", async (req, res) => {
   try {
-    const filter = {};
+    const filter = { shopId: req.user.shopId };
     if (req.query.supplier) filter.supplier = req.query.supplier;
 
     const purchases = await SupplierPurchase.find(filter).sort({ date: -1 });
@@ -19,9 +22,13 @@ router.get("/", async (req, res) => {
 
 // GET /api/supplier-purchases/summary
 // Aggregate totals — per supplier AND overall (for Dashboard net position)
+// Scoped to the logged-in shop only.
 router.get("/summary", async (req, res) => {
   try {
+    const { shopId } = req.user;
+
     const perSupplier = await SupplierPurchase.aggregate([
+      { $match: { shopId } },
       {
         $group: {
           _id: "$supplier",
@@ -52,9 +59,14 @@ router.get("/summary", async (req, res) => {
 });
 
 // GET /api/supplier-purchases/:id
+// Scoped to the logged-in shop — a purchase belonging to another shop
+// returns 404, same as if it didn't exist.
 router.get("/:id", async (req, res) => {
   try {
-    const purchase = await SupplierPurchase.findById(req.params.id);
+    const purchase = await SupplierPurchase.findOne({
+      _id: req.params.id,
+      shopId: req.user.shopId,
+    });
     if (!purchase) return res.status(404).json({ error: "Purchase not found" });
     res.json(purchase);
   } catch (err) {
@@ -62,7 +74,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// POST /api/supplier-purchases — create a new purchase entry
+// POST /api/supplier-purchases — create a new purchase entry (tagged to this shop)
 router.post("/", async (req, res) => {
   try {
     const { supplier, description, amount, paidAmount, date, dueDate } = req.body;
@@ -71,13 +83,16 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Supplier and amount are required" });
     }
 
-    const supplierDoc = await Supplier.findById(supplier);
+    // Supplier must also belong to this shop — otherwise you could log a
+    // purchase against another shop's supplier by guessing their ObjectId.
+    const supplierDoc = await Supplier.findOne({ _id: supplier, shopId: req.user.shopId });
     if (!supplierDoc) return res.status(404).json({ error: "Supplier not found" });
 
     const purchaseId = `PUR-${Date.now().toString().slice(-6)}`;
 
     const purchase = new SupplierPurchase({
       purchaseId,
+      shopId: req.user.shopId,
       supplier,
       supplierName: supplierDoc.name,
       description: description || "",
@@ -94,10 +109,13 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PUT /api/supplier-purchases/:id — edit a purchase entry
+// PUT /api/supplier-purchases/:id — edit a purchase entry (scoped to this shop)
 router.put("/:id", async (req, res) => {
   try {
-    const purchase = await SupplierPurchase.findById(req.params.id);
+    const purchase = await SupplierPurchase.findOne({
+      _id: req.params.id,
+      shopId: req.user.shopId,
+    });
     if (!purchase) return res.status(404).json({ error: "Purchase not found" });
 
     const { description, amount, paidAmount, date, dueDate } = req.body;
@@ -115,6 +133,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // PUT /api/supplier-purchases/:id/pay — record a payment against pending amount
+// (scoped to this shop)
 // Body: { amount: 5000 }
 router.put("/:id/pay", async (req, res) => {
   try {
@@ -123,7 +142,10 @@ router.put("/:id/pay", async (req, res) => {
       return res.status(400).json({ error: "Valid payment amount required" });
     }
 
-    const purchase = await SupplierPurchase.findById(req.params.id);
+    const purchase = await SupplierPurchase.findOne({
+      _id: req.params.id,
+      shopId: req.user.shopId,
+    });
     if (!purchase) return res.status(404).json({ error: "Purchase not found" });
 
     purchase.paidAmount += Number(amount);
@@ -141,10 +163,13 @@ router.put("/:id/pay", async (req, res) => {
   }
 });
 
-// DELETE /api/supplier-purchases/:id
+// DELETE /api/supplier-purchases/:id (scoped to this shop)
 router.delete("/:id", async (req, res) => {
   try {
-    const purchase = await SupplierPurchase.findByIdAndDelete(req.params.id);
+    const purchase = await SupplierPurchase.findOneAndDelete({
+      _id: req.params.id,
+      shopId: req.user.shopId,
+    });
     if (!purchase) return res.status(404).json({ error: "Purchase not found" });
     res.json({ success: true });
   } catch (err) {
