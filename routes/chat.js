@@ -3,26 +3,23 @@ const router = express.Router();
 const OpenAI = require("openai");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const { verifyToken } = require("../middleware/auth");
 
-// ── Groq (FREE, OpenAI-compatible) ───────────────────────────────────────
 const openai = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
   baseURL: "https://api.groq.com/openai/v1",
-  timeout: 15000, // fail fast instead of hanging the request if Groq is slow
+  timeout: 15000,
 });
 
-// How many previous turns (user+assistant pairs) to keep for context.
-// Keeping this small keeps latency and token cost low while still letting
-// the AI handle natural follow-ups ("uska price kya hai" etc.)
 const MAX_HISTORY_TURNS = 6;
 
+router.use(verifyToken); // ── ab shop-scoped hai ──
+
 // ── Smart analysis engine ──────────────────────────────────────────────
-// Fixed: schema only has Completed/Pending/Cancelled — "Delivered" and
-// "Processing" never existed, so those counts were always silently 0.
-async function analyzeBusinessData() {
+async function analyzeBusinessData(shopId) {
   const [orders, products] = await Promise.all([
-    Order.find().sort({ date: -1 }).limit(1000).lean(),
-    Product.find().sort({ stock: 1 }).lean(),
+    Order.find({ shopId }).sort({ date: -1 }).limit(1000).lean(),
+    Product.find({ shopId }).sort({ stock: 1 }).lean(),
   ]);
 
   const total = orders.length;
@@ -130,8 +127,6 @@ function generateReply(userMsg, d) {
 }
 
 // ── Build compact context for AI ──────────────────────────────────────────
-// Capped list lengths so a shop with hundreds of low-stock/slow-moving
-// products doesn't blow up the prompt size (slower + costs more tokens).
 function buildContextSummary(d) {
   const topProducts = Object.entries(d.revenueByProduct)
     .sort((a, b) => b[1] - a[1])
@@ -155,13 +150,11 @@ Business Snapshot:
 }
 
 // ── AI reply via Groq (FREE) ───────────────────────────────────────────────
-// Now accepts `history` (array of { role, text }) so follow-up questions
-// like "uska price kya hai" actually have context to resolve against.
 async function getAIReply(userMsg, history, d) {
   const context = buildContextSummary(d);
 
   const trimmedHistory = (history || [])
-    .slice(-MAX_HISTORY_TURNS * 2) // keep last N turns (user+assistant)
+    .slice(-MAX_HISTORY_TURNS * 2)
     .filter((m) => m && m.text && (m.role === "user" || m.role === "assistant"))
     .map((m) => ({ role: m.role, content: m.text }));
 
@@ -209,7 +202,7 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const data = await analyzeBusinessData();
+    const data = await analyzeBusinessData(req.user.shopId);
     let reply;
     let usedFallback = false;
 
