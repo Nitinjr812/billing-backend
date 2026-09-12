@@ -173,24 +173,30 @@ router.post("/", async (req, res) => {
     const total = Math.round((taxableAmount + gstAmount) * 100) / 100;
 
     const invoiceId = `INV-${Date.now().toString().slice(-8)}`;
+    const { shopId } = req.user;
 
     for (const [idx, item] of items.entries()) {
       const escaped = item.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const product = await Product.findOne({ name: { $regex: `^${escaped}$`, $options: "i" } });
+      // shopId filter yahan zaroori hai — warna doosri shop mein same naam ka
+      // product mil sakta hai aur uska stock galti se ghat jaayega.
+      const product = await Product.findOne({
+        shopId,
+        name: { $regex: `^${escaped}$`, $options: "i" },
+      });
       if (product) {
         product.stock = Math.max(0, product.stock - Number(item.qty));
         await product.save();
       }
       const orderId = `${invoiceId}-${idx + 1}`;
       await Order.create({
-        orderId, customer: customerName,
+        orderId, shopId, customer: customerName,
         amount: Number(item.qty) * Number(item.price),
         status: orderStatus, product: item.name, qty: Number(item.qty), date: new Date(),
       });
     }
 
     const invoice = new Invoice({
-      invoiceId, customerName, customerEmail, customerPhone, items,
+      invoiceId, shopId, customerName, customerEmail, customerPhone, items,
       subtotal, discountType: safeDiscountType, discountValue: safeDiscountValue,
       discountAmount, gstRate: safeGstRate, gstAmount, sellerGstin: sellerGstin || "", total,
     });
@@ -227,9 +233,10 @@ router.post("/", async (req, res) => {
   }
 });
 
+// GET /api/invoices — sirf apni shop ke invoices
 router.get("/", async (req, res) => {
   try {
-    const invoices = await Invoice.find().sort({ createdAt: -1 });
+    const invoices = await Invoice.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
     res.json(invoices);
   } catch (err) {
     res.status(500).json({ error: err.message });
