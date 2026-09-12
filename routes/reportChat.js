@@ -3,17 +3,20 @@ const router = express.Router();
 const OpenAI = require("openai");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const { verifyToken } = require("../middleware/auth");
 
 const openai = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
   baseURL: "https://api.groq.com/openai/v1",
 });
 
+router.use(verifyToken); // ── ab shop-scoped hai ──
+
 // ── Smart analysis engine ─────────────────────────────────────────────────
-async function analyzeBusinessData() {
+async function analyzeBusinessData(shopId) {
   const [orders, products] = await Promise.all([
-    Order.find().sort({ date: -1 }),
-    Product.find().sort({ stock: 1 }),
+    Order.find({ shopId }).sort({ date: -1 }),
+    Product.find({ shopId }).sort({ stock: 1 }),
   ]);
 
   const total = orders.length;
@@ -41,8 +44,6 @@ async function analyzeBusinessData() {
   const slowMoving = products.filter((p) => (ordersByProduct[p.name] || 0) < 2);
   const fastGrowing = products.filter((p) => p.growthPercent >= 15);
 
-  // Revenue & Orders by Month (Reports page ke charts ke liye already tumhare /api/reports mein hoga,
-  // yahan chat ke context ke liye simple monthly summary bhi bana rahe hain)
   const revenueByMonth = {};
   const ordersByMonth = {};
   for (const o of orders) {
@@ -141,7 +142,7 @@ router.post("/", async (req, res) => {
   if (!message) return res.status(400).json({ error: "message required" });
 
   try {
-    const data = await analyzeBusinessData();
+    const data = await analyzeBusinessData(req.user.shopId);
     let reply;
     try {
       reply = await getAIReply(message, data);

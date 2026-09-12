@@ -2,12 +2,17 @@ const express = require("express");
 const router = express.Router();
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const { verifyToken } = require("../middleware/auth");
+
+router.use(verifyToken); // ── ab shop-scoped hai ──
 
 router.get("/", async (req, res) => {
   try {
+    const { shopId } = req.user;
+
     const [orders, products] = await Promise.all([
-      Order.find().sort({ date: -1 }),
-      Product.find(),
+      Order.find({ shopId }).sort({ date: -1 }),
+      Product.find({ shopId }),
     ]);
 
     const total = orders.length;
