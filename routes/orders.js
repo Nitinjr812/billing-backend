@@ -1,15 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const Order = require("../models/Order");
+const { verifyToken } = require("../middleware/auth");
 
-// GET all orders
-// - .lean() skips mongoose document hydration → much faster JSON responses
-// - .limit(500) caps how much data is sent/parsed on every dashboard poll
-//   (dashboard only needs recent history for its charts; raise/remove if
-//   you have a page elsewhere that genuinely needs full order history)
+router.use(verifyToken); // ── har request ab shop-scoped hai ──
+
+// GET all orders (sirf apni shop ke)
 router.get("/", async (req, res) => {
   try {
-    const orders = await Order.find()
+    const orders = await Order.find({ shopId: req.user.shopId })
       .sort({ date: -1 })
       .limit(500)
       .lean();
@@ -19,15 +18,12 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET order summary stats
-// Combined into a single aggregation ($facet) instead of 5 separate
-// round-trips (4x countDocuments + 1x aggregate). Also dropped the
-// "Delivered"/"Processing" counts since those statuses don't exist
-// in the schema enum — they were always querying for 0 and wasting a
-// round-trip each time.
+// GET order summary stats (sirf apni shop ke)
 router.get("/stats", async (req, res) => {
   try {
+    const { shopId } = req.user;
     const [result] = await Order.aggregate([
+      { $match: { shopId } },
       {
         $facet: {
           total: [{ $count: "count" }],
@@ -56,13 +52,16 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-// POST create order
+// POST create order (apni shop ke saath tag hoke)
 router.post("/", async (req, res) => {
   try {
-    const order = new Order(req.body);
+    const order = new Order({ ...req.body, shopId: req.user.shopId });
     await order.save();
     res.status(201).json(order);
   } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({ error: "An order with this ID already exists in your shop." });
+    }
     res.status(400).json({ error: err.message });
   }
 });
