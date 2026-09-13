@@ -20,7 +20,7 @@ router.post("/parse", async (req, res) => {
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "openai/gpt-oss-120b", // updated — old model was decommissioned by Groq
       messages: [
         {
           role: "system",
