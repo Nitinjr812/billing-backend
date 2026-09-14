@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 
 const invoiceSchema = new mongoose.Schema({
+  shopId: { type: String, required: true }, 
   invoiceId: { type: String, required: true, unique: true },
   customerName: { type: String, required: true },
   customerEmail: { type: String, default: "" },
