@@ -82,11 +82,11 @@ router.post("/check-discount", async (req, res) => {
       otpExpires: otpExpiry(),
     });
 
-  await sendOTPEmail(owner.email, otp, "discount-approval", {
-  staffName: staff.name,
-  customerName: req.body.customerName || "",
-  discountAmount,
-});
+    await sendOTPEmail(owner.email, otp, "discount-approval", {
+      staffName: staff.name,
+      customerName: req.body.customerName || "",
+      discountAmount,
+    });
 
     return res.json({
       allowed: false,
@@ -189,7 +189,7 @@ router.post("/", async (req, res) => {
       }
       const orderId = `${invoiceId}-${idx + 1}`;
       await Order.create({
-        orderId, shopId, customer: customerName,
+        orderId, invoiceId, shopId, customer: customerName,   // ← invoiceId add kiya
         amount: Number(item.qty) * Number(item.price),
         status: orderStatus, product: item.name, qty: Number(item.qty), date: new Date(),
       });
@@ -240,7 +240,7 @@ router.get("/", async (req, res) => {
     res.json(invoices);
   } catch (err) {
     res.status(500).json({ error: err.message });
-  } 
+  }
 });
 
 module.exports = router;
