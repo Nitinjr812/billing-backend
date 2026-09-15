@@ -22,7 +22,7 @@ const notificationsRoute = require("./routes/notifications");
 const supplierPurchasesRouter = require("./routes/supplierPurchases");
 const superAdminRouter = require("./routes/superadmin");
 const tasksRouter = require("./routes/tasks");
-const restockOrdersRouter = require("./routes/restockOrder");
+const restockOrdersRouter = require("./routes/restockOrders");
 
 const app = express();
 
