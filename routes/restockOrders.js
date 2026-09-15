@@ -6,7 +6,7 @@
 
 const express = require("express");
 const router = express.Router();
-const RestockOrder = require("../models/RestockOrder"); // must match actual filename case exactly
+const RestockOrder = require("../models/Restockorder");  
 const Product = require("../models/Product");
 const { verifyToken } = require("../middleware/auth");
 
