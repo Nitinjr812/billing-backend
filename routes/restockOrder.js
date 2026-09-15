@@ -10,7 +10,7 @@
 
 const express = require("express");
 const router = express.Router();
-const RestockOrder = require("../models/RestockOrder");
+const RestockOrder = require("../models/Restockorder");
 const Product = require("../models/Product"); // ADJUST THIS path if different
 
 // GET /api/restock-orders  — list all (newest first). Optional ?status=Pending&supplier=ID

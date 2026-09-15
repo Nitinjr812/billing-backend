@@ -22,7 +22,7 @@ const notificationsRoute = require("./routes/notifications");
 const supplierPurchasesRouter = require("./routes/supplierPurchases");
 const superAdminRouter = require("./routes/superadmin");
 const tasksRouter = require("./routes/tasks");
-const restockOrdersRouter = require("./routes/restockOrders"); // NEW — restock → inventory flow
+const restockOrdersRouter = require("./routes/restockOrder"); // NEW — restock → inventory flow
 
 const app = express();
 
