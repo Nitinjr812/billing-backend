@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 require("dotenv").config();
+const { Cashfree, CFEnvironment } = require("cashfree-pg");
 
 // Import routers
 const discountPermissionsRoute = require("./routes/discountPermissions");
@@ -23,6 +24,7 @@ const supplierPurchasesRouter = require("./routes/supplierPurchases");
 const superAdminRouter = require("./routes/superadmin");
 const tasksRouter = require("./routes/tasks");
 const restockOrdersRouter = require("./routes/restockOrders");
+const paymentsRouter = require("./routes/payments"); // NEW — Cashfree create-order/order-status
 
 const app = express();
 
@@ -36,6 +38,34 @@ app.use(cors({
   ],
   credentials: true,
 }));
+
+// ── CASHFREE WEBHOOK (must come BEFORE express.json()) ──────────────────
+// Signature verification needs the raw, unparsed request body. If this
+// route were registered after app.use(express.json()), the body would
+// already be parsed into an object and verification would fail.
+const cashfree = new Cashfree(
+  process.env.CASHFREE_ENV === "PRODUCTION" ? CFEnvironment.PRODUCTION : CFEnvironment.SANDBOX,
+  process.env.CASHFREE_CLIENT_ID,
+  process.env.CASHFREE_CLIENT_SECRET
+);
+
+app.post("/api/payments/webhook", express.raw({ type: "*/*" }), (req, res) => {
+  try {
+    cashfree.PGVerifyWebhookSignature(
+      req.headers["x-webhook-signature"],
+      req.body,
+      req.headers["x-webhook-timestamp"]
+    );
+    const event = JSON.parse(req.body.toString());
+    console.log("Verified webhook:", event.type, event.data?.order?.order_id);
+    // TODO: update order/subscription status in MongoDB here
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("Webhook verification failed:", err.message);
+    res.status(400).send("Invalid signature");
+  }
+});
+
 app.use(express.json());
 
 // ── DATABASE CONNECTION (serverless-safe: cache + reuse across invocations) ──
@@ -135,6 +165,7 @@ app.use("/api/discount-permissions", discountPermissionsRoute);
 app.use("/api/sa-x7k9q2", superAdminRouter);
 app.use("/api/tasks", tasksRouter);
 app.use("/api/restock-orders", restockOrdersRouter); // NEW — see routes/restockOrders.js
+app.use("/api/payments", paymentsRouter); // NEW — Cashfree create-order/order-status
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
