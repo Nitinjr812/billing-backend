@@ -7,6 +7,11 @@ const { verifyToken, requireRole } = require("../middleware/auth");
 
 router.use(verifyToken); // ── sab settings routes ke liye login zaroori ──
 
+// ── PING — lightweight endpoint, frontend polling ke liye. Agar yeh
+// call yahan tak pahunchi (verifyToken pass ho gaya) to shop active hai.
+// verifyToken khud SHOP_SUSPENDED check karke 403 de deta hai warna. ────
+router.get("/ping", (req, res) => res.json({ ok: true }));
+
 // ── GET Profile ──────────────────────────────────────────────────────────
 router.get("/profile", async (req, res) => {
   try {

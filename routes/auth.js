@@ -130,6 +130,7 @@ router.post("/verify-signup-otp", async (req, res) => {
 });
 
 // ── LOGIN STEP 1 (password check, sends login OTP) ──────────────────────
+// ── LOGIN STEP 1 (password check, sends login OTP) ──────────────────────
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -148,6 +149,16 @@ router.post("/login", async (req, res) => {
         error: "Account is not verified yet. Please verify your signup OTP first.",
         needsSignupVerification: true,
         email: user.email,
+      });
+    }
+
+    // ── NAYA: shop suspended check ────────────────────────────────────
+    const shop = await Shop.findOne({ shopId: user.shopId }).select("status suspendedReason");
+    if (shop && shop.status === "suspended") {
+      return res.status(403).json({
+        error: "Your shop has been suspended. Please contact support.",
+        code: "SHOP_SUSPENDED",
+        reason: shop.suspendedReason || "",
       });
     }
 
@@ -171,6 +182,7 @@ router.post("/login", async (req, res) => {
 });
 
 // ── LOGIN STEP 2 (verify login OTP, issue token) ────────────────────────
+// ── LOGIN STEP 2 (verify login OTP, issue token) ────────────────────────
 router.post("/verify-login-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -179,6 +191,16 @@ router.post("/verify-login-otp", async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     if (!user.otp || user.otp !== otp || user.otpExpires < Date.now()) {
       return res.status(400).json({ error: "Invalid or expired OTP" });
+    }
+
+    // ── NAYA: shop suspended check (double safety — beech mein suspend ho sakta hai) ──
+    const shop = await Shop.findOne({ shopId: user.shopId }).select("status suspendedReason");
+    if (shop && shop.status === "suspended") {
+      return res.status(403).json({
+        error: "Your shop has been suspended. Please contact support.",
+        code: "SHOP_SUSPENDED",
+        reason: shop.suspendedReason || "",
+      });
     }
 
     user.otp = undefined;
