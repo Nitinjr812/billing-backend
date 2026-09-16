@@ -79,7 +79,14 @@ router.post("/scan-stock", async (req, res) => {
   try {
     const { shopId } = req.user;
 
-    const [products, orders] = await Promise.all([Product.find().lean(), Order.find().lean()]);
+    // ── FIX: sirf isi shop ke products/orders scan karo — pehle yahan
+    // Product.find() aur Order.find() bina shopId filter ke saari shops
+    // ka data utha rahe the, isliye ek shop ka scan doosri shop ke
+    // products ki notification bhi generate kar raha tha. ──────────────
+    const [products, orders] = await Promise.all([
+      Product.find({ shopId }).lean(),
+      Order.find({ shopId }).lean(),
+    ]);
 
     const ordersByProduct = {};
     for (const o of orders) {
