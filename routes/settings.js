@@ -133,6 +133,17 @@ router.put("/notifications", async (req, res) => {
   }
 });
 
+// ── GET Subscription (apni shop ka real plan + billing history) ─────────
+router.get("/subscription", async (req, res) => {
+  try {
+    const shop = await Shop.findOne({ shopId: req.user.shopId }).select("subscription");
+    if (!shop) return res.status(404).json({ error: "Shop not found" });
+    res.json(shop.subscription);
+  } catch (err) {
+    console.error("Subscription fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch subscription" });
+  }
+});
 // ── GET Tax / GST settings ───────────────────────────────────────────────
 router.get("/tax", async (req, res) => {
   try {

@@ -13,7 +13,6 @@ const shopSchema = new mongoose.Schema({
   status: { type: String, enum: ["active", "suspended"], default: "active" },
   suspendedReason: { type: String, default: "" },
 
-  // ⬇️ NAYA — subscription tracking
   subscription: {
     plan: { type: String, enum: ["free", "pro", "premium"], default: "free" },
     monthlyAmount: { type: Number, default: 0 },
@@ -23,6 +22,7 @@ const shopSchema = new mongoose.Schema({
         date: { type: Date, default: Date.now },
         amount: { type: Number, required: true },
         plan: { type: String },
+        orderId: { type: String, default: null }, // ⬅ NAYA — Cashfree order id, duplicate webhook process hone se rokta hai
       },
     ],
   },
