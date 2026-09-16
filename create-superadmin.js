@@ -9,15 +9,19 @@ async function run() {
   const email = "devnity10@gmail.com";       // ⬅️ apna email daal
   const password = "draftbillsuperadmin123";       // ⬅️ apna strong password daal
 
+  const hashed = await bcrypt.hash(password, 10);
+
   const existing = await SuperAdmin.findOne({ email });
+
   if (existing) {
-    console.log("Already exists!");
-    process.exit(0);
+    existing.password = hashed;
+    await existing.save();
+    console.log("✅ Password updated for existing super admin:", email);
+  } else {
+    await SuperAdmin.create({ email, password: hashed, name: "Nitin" });
+    console.log("✅ Super admin created:", email);
   }
 
-  const hashed = await bcrypt.hash(password, 10);
-  await SuperAdmin.create({ email, password: hashed, name: "Nitin" });
-  console.log("Super admin created ✅");
   process.exit(0);
 }
 

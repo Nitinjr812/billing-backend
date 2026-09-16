@@ -6,6 +6,7 @@ const SuperAdmin = require("../models/SuperAdmin");
 const Shop = require("../models/Shop");
 const User = require("../models/User");
 const AdminMessage = require("../models/AdminMessage");
+const Notification = require("../models/Notification");
 const { verifySuperAdmin } = require("../middleware/superAdminAuth");
 
 const PLAN_DEFAULT_AMOUNTS = { free: 0, pro: 999, premium: 2499 };
@@ -38,6 +39,16 @@ router.post("/login", async (req, res) => {
 });
 
 router.use(verifySuperAdmin); // ── neeche ke sab routes protected hain ──
+
+// ── helper: shop ke saare users (owner + staff) ko ek Notification bhejo ──
+async function notifyShop(shopId, { title, message, type = "announcement" }) {
+  try {
+    await Notification.create({ shopId, recipientId: null, type, title, message });
+  } catch (err) {
+    // Notification fail hone se main action fail nahi hona chahiye — bas log karo
+    console.error("notifyShop failed:", err.message);
+  }
+}
 
 // ── LIST all shops (with subscription summary) ───────────────────────
 router.get("/shops", async (req, res) => {
@@ -109,6 +120,21 @@ router.patch("/shops/:shopId/status", async (req, res) => {
 
     if (!shop) return res.status(404).json({ error: "Shop not found" });
 
+    // ── shop ke bell me actually dikhne ke liye Notification ──
+    if (status === "suspended") {
+      await notifyShop(shop.shopId, {
+        type: "announcement",
+        title: "Your shop has been suspended",
+        message: reason ? `Reason: ${reason}` : "Your shop access has been suspended by the admin. Please contact support.",
+      });
+    } else {
+      await notifyShop(shop.shopId, {
+        type: "announcement",
+        title: "Your shop is active again",
+        message: "Your shop has been reactivated. You can now access everything as usual.",
+      });
+    }
+
     res.json({ success: true, shop });
   } catch (err) {
     console.error("Superadmin status update error:", err.message);
@@ -122,11 +148,14 @@ router.patch("/shops/:shopId/subscription", async (req, res) => {
     const { plan, monthlyAmount, discountPercent } = req.body;
 
     const update = {};
+    const changesForNotify = [];
+
     if (plan !== undefined) {
       if (!["free", "pro", "premium"].includes(plan)) {
         return res.status(400).json({ error: "Invalid plan" });
       }
       update["subscription.plan"] = plan;
+      changesForNotify.push(`plan changed to ${plan}`);
       // agar amount nahi diya, plan ke default amount pe set kar do
       if (monthlyAmount === undefined) {
         update["subscription.monthlyAmount"] = PLAN_DEFAULT_AMOUNTS[plan];
@@ -141,6 +170,7 @@ router.patch("/shops/:shopId/subscription", async (req, res) => {
       const dp = Number(discountPercent);
       if (isNaN(dp) || dp < 0 || dp > 100) return res.status(400).json({ error: "Invalid discountPercent" });
       update["subscription.discountPercent"] = dp;
+      if (dp > 0) changesForNotify.push(`a ${dp}% discount was applied`);
     }
 
     const shop = await Shop.findOneAndUpdate(
@@ -150,6 +180,14 @@ router.patch("/shops/:shopId/subscription", async (req, res) => {
     );
 
     if (!shop) return res.status(404).json({ error: "Shop not found" });
+
+    if (changesForNotify.length > 0) {
+      await notifyShop(shop.shopId, {
+        type: "announcement",
+        title: "Your subscription was updated",
+        message: `Your subscription was updated: ${changesForNotify.join(", ")}.`,
+      });
+    }
 
     res.json({ success: true, subscription: shop.subscription });
   } catch (err) {
@@ -191,12 +229,20 @@ router.post("/shops/:shopId/notify", async (req, res) => {
     const shop = await Shop.findOne({ shopId: req.params.shopId });
     if (!shop) return res.status(404).json({ error: "Shop not found" });
 
+    const safeType = ["offer", "announcement", "warning"].includes(type) ? type : "offer";
+
     const msg = await AdminMessage.create({
       shopId: req.params.shopId,
       title,
       message,
-      type: ["offer", "announcement", "warning"].includes(type) ? type : "offer",
+      type: safeType,
     });
+
+    // ── ab shop ke notification bell me bhi dikhega ──
+    // Notification schema ka enum "announcement" allow karta hai; offer/warning
+    // ko bhi announcement type ke through hi bell me daal rahe hain taaki koi
+    // migration na karni pade.
+    await notifyShop(req.params.shopId, { type: "announcement", title, message });
 
     res.json({ success: true, message: msg });
   } catch (err) {
