@@ -6,8 +6,8 @@ const SuperAdmin = require("./models/SuperAdmin");
 async function run() {
   await mongoose.connect(process.env.MONGO_URI);
 
-  const email = "devnity10@gmail.com";       // ⬅️ apna email daal
-  const password = "EkStrongPassword123!";       // ⬅️ apna strong password daal
+  const email = "devnity10@gmail.com";        
+  const password = "strongnitin!1010";       
 
   const existing = await SuperAdmin.findOne({ email });
   if (existing) {
