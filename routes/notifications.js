@@ -7,6 +7,9 @@ const { verifyToken } = require("../middleware/auth");
 
 router.use(verifyToken); // ── ab har request pe req.user (userId, shopId) chahiye ──
 
+// How long a cached AI suggestion stays valid before regenerating
+const SUGGESTION_CACHE_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 // ── GET my notifications (shop-broadcast + mujhe targeted) ──────────────
 router.get("/", async (req, res) => {
   try {
@@ -29,6 +32,7 @@ router.get("/", async (req, res) => {
       taskId: n.taskId,
       createdAt: n.createdAt,
       read: (n.readBy || []).some((id) => id.toString() === userId.toString()),
+      aiSuggestion: n.aiSuggestion || null,
     }));
 
     const unreadCount = notifications.filter((n) => !n.read).length;
@@ -60,7 +64,7 @@ router.patch("/:id/read", async (req, res) => {
   }
 });
 
-// ── PATCH mark everything read ("Mark all read" / "Clear all") ──────────
+// ── PATCH mark everything read ("Mark all read") ─────────────────────
 router.patch("/read-all", async (req, res) => {
   try {
     const { userId, shopId } = req.user;
@@ -74,15 +78,133 @@ router.patch("/read-all", async (req, res) => {
   }
 });
 
+// ── DELETE one notification ("clear" a single card) ──────────────────
+// Note: broadcast notifications (recipientId: null) are shop-wide, so
+// deleting one removes it for the whole shop, not just this user.
+router.delete("/:id", async (req, res) => {
+  try {
+    const { userId, shopId } = req.user;
+    const notif = await Notification.findOneAndDelete({
+      _id: req.params.id,
+      shopId,
+      $or: [{ recipientId: null }, { recipientId: userId }],
+    });
+    if (!notif) return res.status(404).json({ error: "Notification not found" });
+    res.json({ success: true, id: req.params.id });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── DELETE everything ("Clear all" — actually removes, not just read) ─
+router.delete("/", async (req, res) => {
+  try {
+    const { userId, shopId } = req.user;
+    const result = await Notification.deleteMany({
+      shopId,
+      $or: [{ recipientId: null }, { recipientId: userId }],
+    });
+    res.json({ success: true, deletedCount: result.deletedCount });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── POST AI suggestion for a notification (cached on the doc) ────────
+router.post("/:id/suggest", async (req, res) => {
+  try {
+    const { userId, shopId } = req.user;
+    const notif = await Notification.findOne({
+      _id: req.params.id,
+      shopId,
+      $or: [{ recipientId: null }, { recipientId: userId }],
+    });
+    if (!notif) return res.status(404).json({ error: "Notification not found" });
+
+    // Serve cached suggestion if it's still fresh
+    const isFresh =
+      notif.aiSuggestion &&
+      notif.aiSuggestionAt &&
+      Date.now() - new Date(notif.aiSuggestionAt).getTime() < SUGGESTION_CACHE_MS;
+
+    if (isFresh) {
+      return res.json({ suggestion: notif.aiSuggestion, cached: true });
+    }
+
+    // Pull real context: product details + recent order count + how many
+    // times this same alert has recurred for this product.
+    let product = null;
+    let recentOrders = 0;
+    if (notif.productId) {
+      product = await Product.findOne({ productId: notif.productId, shopId }).lean();
+      if (product) {
+        const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        recentOrders = await Order.countDocuments({
+          shopId,
+          product: product.name,
+          status: { $ne: "Cancelled" },
+          createdAt: { $gte: cutoff },
+        });
+      }
+    }
+
+    const occurrenceCount = notif.productId
+      ? await Notification.countDocuments({ shopId, type: notif.type, productId: notif.productId })
+      : 1;
+
+    const prompt = `You are helping a small retail shop owner in India understand a stock/sales alert from their inventory dashboard.
+
+Alert type: ${notif.type}
+Product: ${product?.name || "N/A"}
+Current stock: ${product?.stock ?? "unknown"}
+Orders for this product in the last 30 days: ${recentOrders}
+Alert message: ${notif.message}
+This alert has recurred ${occurrenceCount} time(s) for this product.
+First raised: ${notif.createdAt}
+
+Write ONE short, specific, actionable suggestion (max 2 sentences) for what the shop owner should do. Use the actual numbers given. No greeting, no preamble — just the suggestion.`;
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001", // fast + cheap, good enough for short suggestions
+        max_tokens: 150,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Anthropic API error:", errText);
+      return res.status(502).json({ error: "AI suggestion service failed" });
+    }
+
+    const data = await response.json();
+    const suggestion =
+      data.content?.find((b) => b.type === "text")?.text?.trim() ||
+      "Could not generate a suggestion right now.";
+
+    notif.aiSuggestion = suggestion;
+    notif.aiSuggestionAt = new Date();
+    await notif.save();
+
+    res.json({ suggestion, cached: false });
+  } catch (err) {
+    console.error("AI suggestion error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── POST scan-stock — poori shop (owner + staff) ko broadcast karta hai ──
 router.post("/scan-stock", async (req, res) => {
   try {
     const { shopId } = req.user;
 
-    // ── FIX: sirf isi shop ke products/orders scan karo — pehle yahan
-    // Product.find() aur Order.find() bina shopId filter ke saari shops
-    // ka data utha rahe the, isliye ek shop ka scan doosri shop ke
-    // products ki notification bhi generate kar raha tha. ──────────────
     const [products, orders] = await Promise.all([
       Product.find({ shopId }).lean(),
       Order.find({ shopId }).lean(),
@@ -147,3 +269,8 @@ router.post("/scan-stock", async (req, res) => {
 });
 
 module.exports = router;
+
+/* ── Notification model — add these two fields if not present ──────────
+aiSuggestion:   { type: String, default: null },
+aiSuggestionAt: { type: Date, default: null },
+------------------------------------------------------------------------ */
