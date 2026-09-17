@@ -3,6 +3,7 @@ const router = express.Router();
 const OpenAI = require("openai");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const Shop = require("../models/Shop");
 const { verifyToken } = require("../middleware/auth");
 
 const openai = new OpenAI({
@@ -13,7 +14,73 @@ const openai = new OpenAI({
 
 const MAX_HISTORY_TURNS = 6;
 
-router.use(verifyToken); // ── ab shop-scoped hai ──
+// ── PLAN-BASED CONFIG ───────────────────────────────────────────────────
+// plan values match Shop.subscription.plan: "free" (Starter), "pro", "premium" (Enterprise)
+const PLAN_LIMITS = {
+  free: {
+    dailyLimit: 15,
+    maxTokens: 250,
+    detailLevel: "Keep replies short and to the point — 1 to 3 sentences. Give the headline number/action, skip deep breakdowns unless explicitly asked.",
+  },
+  pro: {
+    dailyLimit: 150,
+    maxTokens: 500,
+    detailLevel: "Give clear, moderately detailed answers — 2 to 5 sentences. Include specific numbers and one concrete next step.",
+  },
+  premium: {
+    dailyLimit: Infinity,
+    maxTokens: 900,
+    detailLevel: "Be thorough — give a full breakdown with specific numbers, reasoning, and multi-step, prioritized suggestions when relevant. This user gets the deepest level of analysis.",
+  },
+};
+
+router.use(verifyToken); // ── shop-scoped ──
+
+// ── Plan gating middleware ───────────────────────────────────────────────
+// Reads Shop.subscription.plan + Shop.subscription.chatUsage ({date, count}).
+// NOTE: add `chatUsage: { date: String, count: Number }` inside `subscription`
+// in models/Shop.js if it isn't there yet, or this will silently no-op under
+// a strict schema.
+async function checkPlanLimit(req, res, next) {
+  try {
+    const shop = await Shop.findOne({ shopId: req.user.shopId }).lean();
+    if (!shop) return res.status(404).json({ error: "Shop not found" });
+
+    const plan = shop.subscription?.plan || "free";
+    const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const usage = shop.subscription?.chatUsage || {};
+    const usedToday = usage.date === today ? usage.count || 0 : 0;
+
+    if (limits.dailyLimit !== Infinity && usedToday >= limits.dailyLimit) {
+      return res.status(429).json({
+        error: "limit_reached",
+        message: `Aaj ke liye Alex ka message limit (${limits.dailyLimit}) khatam ho gaya hai. Upgrade karke zyada messages paayein.`,
+        plan,
+        dailyLimit: limits.dailyLimit,
+      });
+    }
+
+    // Fire-and-continue: bump usage counter (reset if it's a new day)
+    Shop.findOneAndUpdate(
+      { shopId: req.user.shopId },
+      usage.date === today
+        ? { $inc: { "subscription.chatUsage.count": 1 } }
+        : { $set: { "subscription.chatUsage": { date: today, count: 1 } } }
+    ).catch((e) => console.error("chatUsage update failed:", e.message));
+
+    req.planConfig = { plan, ...limits };
+    next();
+  } catch (err) {
+    console.error("Plan check error:", err.message);
+    // fail-open on free-tier settings rather than blocking the user entirely
+    req.planConfig = { plan: "free", ...PLAN_LIMITS.free };
+    next();
+  }
+}
+
+router.use(checkPlanLimit);
 
 // ── Smart analysis engine ──────────────────────────────────────────────
 async function analyzeBusinessData(shopId) {
@@ -46,12 +113,28 @@ async function analyzeBusinessData(shopId) {
   const slowMoving = products.filter((p) => (ordersByProduct[p.name] || 0) < 2);
   const fastGrowing = products.filter((p) => p.growthPercent >= 15);
 
+  // ── Yesterday's sales (for the opening briefing) ──────────────────────
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+  const yesterdayOrders = orders.filter((o) => {
+    const d = new Date(o.date);
+    return d >= startOfYesterday && d < startOfToday && o.status !== "Cancelled";
+  });
+  const yesterdaySales = {
+    count: yesterdayOrders.length,
+    revenue: yesterdayOrders.reduce((s, o) => s + o.amount, 0),
+  };
+
   return {
     orders, products,
     total, completed, pending, cancelled,
     cancellationRate, totalRevenue,
     revenueByProduct, ordersByProduct,
     lowStock, outOfStock, slowMoving, fastGrowing,
+    yesterdaySales,
   };
 }
 
@@ -138,7 +221,8 @@ function buildContextSummary(d) {
 
   return `
 Business Snapshot:
-- Total Revenue: ₹${d.totalRevenue.toLocaleString("en-IN")}
+- Yesterday: ${d.yesterdaySales.count} orders, ₹${d.yesterdaySales.revenue.toLocaleString("en-IN")} revenue
+- Total Revenue (all time): ₹${d.totalRevenue.toLocaleString("en-IN")}
 - Orders: ${d.total} total | ${d.completed} completed | ${d.pending} pending | ${d.cancelled} cancelled
 - Cancellation Rate: ${d.cancellationRate}%
 - Out of Stock (${d.outOfStock.length}): ${cap(d.outOfStock, 15).map((p) => p.name).join(", ") || "None"}${d.outOfStock.length > 15 ? ", ..." : ""}
@@ -150,7 +234,7 @@ Business Snapshot:
 }
 
 // ── AI reply via Groq (FREE) ───────────────────────────────────────────────
-async function getAIReply(userMsg, history, d) {
+async function getAIReply(userMsg, history, d, planConfig, isFirstMessage) {
   const context = buildContextSummary(d);
 
   const trimmedHistory = (history || [])
@@ -158,14 +242,18 @@ async function getAIReply(userMsg, history, d) {
     .filter((m) => m && m.text && (m.role === "user" || m.role === "assistant"))
     .map((m) => ({ role: m.role, content: m.text }));
 
+  const openingInstruction = isFirstMessage
+    ? `\n\nSTART-OF-CHAT RULE: This is the first message of a new conversation. Before addressing the user's message, open with a short, natural business briefing — current stock alerts (out of stock / low stock, if any) and yesterday's sales (orders + revenue) from the data below. Keep it to 2-4 sentences, don't just dump raw labels, weave it in like a person would say it. Then respond to the user's actual message. Match whatever language the user's message is in.`
+    : "";
+
   const completion = await openai.chat.completions.create({
     model: "llama-3.3-70b-versatile",
-    max_tokens: 500,
+    max_tokens: planConfig.maxTokens,
     temperature: 0.5,
     messages: [
       {
         role: "system",
-        content: `You are Alex, an AI assistant built into a shop's inventory and sales management app.
+        content: `You are Alex, an AI business assistant built into a shop's inventory and sales management app. You act as a proactive advisor to the shop owner, not just a data lookup tool.
 
 LANGUAGE RULE (critical): Detect the language of the user's CURRENT message only, and reply entirely in that same language.
 - Pure English question → reply in pure English.
@@ -178,11 +266,12 @@ MEMORY RULE: You have access to the recent conversation history below. Use it to
 
 CAPABILITY QUESTIONS: If the user asks things like "what is this app", "what do you do here", "what can you help with" — explain naturally in your own words that you're an AI assistant for this shop that can answer questions about stock, orders, revenue, cancellations, and give business suggestions based on real data. Don't use a fixed script — vary your wording naturally.
 
-BUSINESS ADVICE: If the user asks how to grow sales, improve revenue, or wants promotion/marketing ideas, give specific, actionable suggestions using the REAL data below — mention actual product names, numbers, and reasoning (e.g. "X hai slow-moving with only 2 orders, ek 15% discount ya bundle deal try karo", "Y stock khatam hone wala hai but demand high hai, urgently restock karo"). Be a genuinely helpful business advisor, not just a data reader.
+BUSINESS ADVICE: If the user asks how to grow sales, improve revenue, or wants promotion/marketing ideas, give specific, actionable suggestions using the REAL data below — mention actual product names, numbers, and reasoning (e.g. "X hai slow-moving with only 2 orders, ek 15% discount ya bundle deal try karo", "Y stock khatam hone wala hai but demand high hai, urgently restock karo"). Be a genuinely helpful business advisor: notice patterns proactively (a product trending up but low on stock, a rising cancellation rate, an underpriced fast-mover) even if the user didn't explicitly ask.
 
 DATA RULE: Base all factual answers strictly on the real data below. Never invent numbers or products that aren't listed. If something isn't in the data, say so instead of guessing.
 
-Keep replies concise, practical, and to the point (2-5 sentences unless the user explicitly asks for a detailed breakdown).
+RESPONSE DEPTH (based on the shop's plan — "${planConfig.plan}"): ${planConfig.detailLevel}
+${openingInstruction}
 
 ${context}`,
       },
@@ -203,11 +292,12 @@ router.post("/", async (req, res) => {
 
   try {
     const data = await analyzeBusinessData(req.user.shopId);
+    const isFirstMessage = !history || history.length === 0;
     let reply;
     let usedFallback = false;
 
     try {
-      reply = await getAIReply(message, history, data);
+      reply = await getAIReply(message, history, data, req.planConfig, isFirstMessage);
     } catch (aiErr) {
       usedFallback = true;
       console.error("AI error →", {
@@ -218,7 +308,7 @@ router.post("/", async (req, res) => {
       reply = generateReply(message, data);
     }
 
-    res.json({ reply, usedFallback });
+    res.json({ reply, usedFallback, plan: req.planConfig.plan });
   } catch (err) {
     console.error("Chat error:", err.message);
     res.status(500).json({ error: "Analysis failed" });
