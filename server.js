@@ -24,7 +24,7 @@ const supplierPurchasesRouter = require("./routes/supplierPurchases");
 const superAdminRouter = require("./routes/superadmin");
 const tasksRouter = require("./routes/tasks");
 const restockOrdersRouter = require("./routes/restockOrders");
-const paymentsRouter = require("./routes/payments"); // NEW — Cashfree create-order/order-status
+const paymentsRouter = require("./routes/payments"); // Cashfree create-order/order-status
 const Shop = require("./models/Shop");
 const app = express();
 
@@ -39,17 +39,31 @@ app.use(cors({
   credentials: true,
 }));
 
-// ── CASHFREE WEBHOOK (must come BEFORE express.json()) ──────────────────
-// Signature verification needs the raw, unparsed request body. If this
-// route were registered after app.use(express.json()), the body would
-// already be parsed into an object and verification would fail.
+// ── CASHFREE CLIENT ──────────────────────────────────────────────────────
 const cashfree = new Cashfree(
   process.env.CASHFREE_ENV === "PRODUCTION" ? CFEnvironment.PRODUCTION : CFEnvironment.SANDBOX,
   process.env.CASHFREE_CLIENT_ID,
   process.env.CASHFREE_CLIENT_SECRET
 );
 
-app.post("/api/payments/webhook", express.raw({ type: "*/*" }), (req, res) => {
+// ── CASHFREE WEBHOOK (must come BEFORE express.json()) ──────────────────
+// Signature verification needs the raw, unparsed request body. If this
+// route were registered after app.use(express.json()), the body would
+// already be parsed into an object and verification would fail.
+//
+// NOTE: this used to be registered TWICE in this file — once as a
+// "log-only" stub (before express.json()) and once with the real
+// Shop.findOneAndUpdate logic (after express.json(), further down).
+// Express matches routes in registration order and the first matching
+// handler sends the response, so the first (stub) handler always won and
+// called res.sendStatus(200) before the real update logic ever ran.
+// Cashfree saw a 200 and considered the webhook delivered, but
+// Shop.subscription was NEVER updated by it. That's why the plan looked
+// like it was "changing on its own" / not updating on payment — the only
+// thing actually writing the plan was the best-effort order-status check
+// that runs client-side after redirect (Subscription.jsx), which is a
+// fallback, not the source of truth. This is the single, real handler now.
+app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   try {
     cashfree.PGVerifyWebhookSignature(
       req.headers["x-webhook-signature"],
@@ -58,7 +72,52 @@ app.post("/api/payments/webhook", express.raw({ type: "*/*" }), (req, res) => {
     );
     const event = JSON.parse(req.body.toString());
     console.log("Verified webhook:", event.type, event.data?.order?.order_id);
-    // TODO: update order/subscription status in MongoDB here
+
+    const order = event.data?.order;
+    const payment = event.data?.payment;
+
+    // ── Sirf successful payment pe hi subscription credit karo ──────────
+    if (event.type === "PAYMENT_SUCCESS_WEBHOOK" && order && payment?.payment_status === "SUCCESS") {
+      const PLAN_ID_MAP = { starter: "free", pro: "pro", enterprise: "premium" };
+      const [shopId, planId, cycle] = (order.order_note || "").split("|");
+      const mappedPlan = PLAN_ID_MAP[planId];
+
+      if (shopId && mappedPlan) {
+        // Idempotency check — same order dobara process na ho
+        const alreadyRecorded = await Shop.exists({
+          shopId,
+          "subscription.renewalHistory.orderId": order.order_id,
+        });
+
+        if (!alreadyRecorded) {
+          await Shop.findOneAndUpdate(
+            { shopId },
+            {
+              $set: {
+                "subscription.plan": mappedPlan,
+                "subscription.monthlyAmount": cycle === "yearly"
+                  ? Math.round(order.order_amount / 12)
+                  : order.order_amount,
+              },
+              $push: {
+                "subscription.renewalHistory": {
+                  date: new Date(),
+                  amount: order.order_amount,
+                  plan: mappedPlan,
+                  orderId: order.order_id,
+                },
+              },
+            }
+          );
+          console.log(`✅ Subscription updated for ${shopId}: ${mappedPlan} (₹${order.order_amount})`);
+        } else {
+          console.log(`Webhook already processed for order ${order.order_id}, skipping`);
+        }
+      } else {
+        console.warn("Webhook order_note missing/invalid shopId or plan:", order.order_note);
+      }
+    }
+
     res.sendStatus(200);
   } catch (err) {
     console.error("Webhook verification failed:", err.message);
@@ -127,67 +186,6 @@ app.use("/api", async (req, res, next) => {
 connectToDatabase();
 
 // ── ROUTES ─────────────────────────────────────────────────────────────
-app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res) => {
-  try {
-    cashfree.PGVerifyWebhookSignature(
-      req.headers["x-webhook-signature"],
-      req.body,
-      req.headers["x-webhook-timestamp"]
-    );
-    const event = JSON.parse(req.body.toString());
-    console.log("Verified webhook:", event.type, event.data?.order?.order_id);
-
-    const order = event.data?.order;
-    const payment = event.data?.payment;
-
-    // ── Sirf successful payment pe hi subscription credit karo ──────────
-    if (event.type === "PAYMENT_SUCCESS_WEBHOOK" && order && payment?.payment_status === "SUCCESS") {
-      const PLAN_ID_MAP = { starter: "free", pro: "pro", enterprise: "premium" };
-      const [shopId, planId, cycle] = (order.order_note || "").split("|");
-      const mappedPlan = PLAN_ID_MAP[planId];
-
-      if (shopId && mappedPlan) {
-        // Idempotency check — same order dobara process na ho
-        const alreadyRecorded = await Shop.exists({
-          shopId,
-          "subscription.renewalHistory.orderId": order.order_id,
-        });
-
-        if (!alreadyRecorded) {
-          await Shop.findOneAndUpdate(
-            { shopId },
-            {
-              $set: {
-                "subscription.plan": mappedPlan,
-                "subscription.monthlyAmount": cycle === "yearly"
-                  ? Math.round(order.order_amount / 12)
-                  : order.order_amount,
-              },
-              $push: {
-                "subscription.renewalHistory": {
-                  date: new Date(),
-                  amount: order.order_amount,
-                  plan: mappedPlan,
-                  orderId: order.order_id,
-                },
-              },
-            }
-          );
-          console.log(`✅ Subscription updated for ${shopId}: ${mappedPlan} (₹${order.order_amount})`);
-        } else {
-          console.log(`Webhook already processed for order ${order.order_id}, skipping`);
-        }
-      } else {
-        console.warn("Webhook order_note missing/invalid shopId or plan:", order.order_note);
-      }
-    }
-
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("Webhook verification failed:", err.message);
-    res.status(400).send("Invalid signature");
-  }
-});
 
 // Home
 app.get("/", (req, res) => {
@@ -225,8 +223,8 @@ app.use("/api/supplier-purchases", supplierPurchasesRouter);
 app.use("/api/discount-permissions", discountPermissionsRoute);
 app.use("/api/sa-x7k9q2", superAdminRouter);
 app.use("/api/tasks", tasksRouter);
-app.use("/api/restock-orders", restockOrdersRouter); // NEW — see routes/restockOrders.js
-app.use("/api/payments", paymentsRouter); // NEW — Cashfree create-order/order-status
+app.use("/api/restock-orders", restockOrdersRouter);
+app.use("/api/payments", paymentsRouter); // Cashfree create-order/order-status
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
