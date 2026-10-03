@@ -2,7 +2,18 @@ const express = require("express");
 const router = express.Router();
 const Report = require("../models/Report");
 const Shop = require("../models/Shop");
-const requireAuth = require("../middleware/auth"); // ⬅ apna actual middleware naam/path yahan daalo
+
+// ⬇ apna asli shop-side auth middleware path yahan daal (jo req.user.shopId set karta ho)
+let requireAuth;
+try {
+  requireAuth = require("../middleware/auth");
+  if (typeof requireAuth !== "function") requireAuth = requireAuth.verifyToken || requireAuth.auth || requireAuth.protect;
+} catch (e) {
+  console.warn("customerReports: auth middleware not found, route disabled:", e.message);
+}
+if (typeof requireAuth !== "function") {
+  requireAuth = (req, res) => res.status(503).json({ error: "Auth middleware not configured" });
+}
 
 router.post("/", requireAuth, async (req, res) => {
   try {
