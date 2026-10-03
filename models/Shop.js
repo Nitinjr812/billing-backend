@@ -12,17 +12,20 @@ const shopSchema = new mongoose.Schema({
   },
   status: { type: String, enum: ["active", "suspended"], default: "active" },
   suspendedReason: { type: String, default: "" },
+  suspendedAt: { type: Date, default: null }, // NAYA
 
   subscription: {
     plan: { type: String, enum: ["free", "pro", "premium"], default: "free" },
     monthlyAmount: { type: Number, default: 0 },
     discountPercent: { type: Number, default: 0 },
+    expiresAt: { type: Date, default: null }, // NAYA — plan kab expire hoga
     renewalHistory: [
       {
         date: { type: Date, default: Date.now },
         amount: { type: Number, required: true },
         plan: { type: String },
-        orderId: { type: String, default: null }, // ⬅ NAYA — Cashfree order id, duplicate webhook process hone se rokta hai
+        orderId: { type: String, default: null },
+        method: { type: String, default: "" }, // NAYA — UPI / Card / Manual
       },
     ],
   },

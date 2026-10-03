@@ -25,6 +25,7 @@ const superAdminRouter = require("./routes/superadmin");
 const tasksRouter = require("./routes/tasks");
 const restockOrdersRouter = require("./routes/restockOrders");
 const paymentsRouter = require("./routes/payments"); // Cashfree create-order/order-status
+const customerReportsRouter = require("./routes/customerReports"); // NAYA — shop se super-admin ko reports
 const Shop = require("./models/Shop");
 const app = express();
 
@@ -39,6 +40,45 @@ app.use(cors({
   credentials: true,
 }));
 
+// ── DATABASE CONNECTION (serverless-safe: cache + reuse across invocations) ──
+// Vercel pe har cold start me ye file dobara chalti hai. Connection promise
+// cache karne se concurrent/repeat invocations wahi connection reuse karte hain.
+let cachedConnectionPromise = null;
+
+function connectToDatabase() {
+  if (!process.env.MONGO_URI) {
+    console.log("⚠️ Using in-memory data (MONGO_URI not set)");
+    return Promise.resolve(null);
+  }
+
+  // Already connected — reuse
+  if (mongoose.connection.readyState === 1) {
+    return Promise.resolve(mongoose.connection);
+  }
+
+  // Already connecting — in-flight promise reuse karo
+  if (cachedConnectionPromise) {
+    return cachedConnectionPromise;
+  }
+
+  cachedConnectionPromise = mongoose
+    .connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 8000, // Vercel function limit se safe
+      socketTimeoutMS: 45000,
+    })
+    .then((conn) => {
+      console.log("MongoDB Connected 🚀");
+      return conn;
+    })
+    .catch((err) => {
+      console.error("MongoDB Error:", err.message);
+      cachedConnectionPromise = null; // next request pe retry ho sake
+      throw err;
+    });
+
+  return cachedConnectionPromise;
+}
+
 // ── CASHFREE CLIENT ──────────────────────────────────────────────────────
 const cashfree = new Cashfree(
   process.env.CASHFREE_ENV === "PRODUCTION" ? CFEnvironment.PRODUCTION : CFEnvironment.SANDBOX,
@@ -47,49 +87,56 @@ const cashfree = new Cashfree(
 );
 
 // ── CASHFREE WEBHOOK (must come BEFORE express.json()) ──────────────────
-// Signature verification needs the raw, unparsed request body. If this
-// route were registered after app.use(express.json()), the body would
-// already be parsed into an object and verification would fail.
+// Signature verification ke liye raw, unparsed body chahiye. Agar ye route
+// express.json() ke baad hota to body object ban chuki hoti aur verify fail hota.
 //
-// NOTE: this used to be registered TWICE in this file — once as a
-// "log-only" stub (before express.json()) and once with the real
-// Shop.findOneAndUpdate logic (after express.json(), further down).
-// Express matches routes in registration order and the first matching
-// handler sends the response, so the first (stub) handler always won and
-// called res.sendStatus(200) before the real update logic ever ran.
-// Cashfree saw a 200 and considered the webhook delivered, but
-// Shop.subscription was NEVER updated by it. That's why the plan looked
-// like it was "changing on its own" / not updating on payment — the only
-// thing actually writing the plan was the best-effort order-status check
-// that runs client-side after redirect (Subscription.jsx), which is a
-// fallback, not the source of truth. This is the single, real handler now.
+// Ye route ab sirf EK baar registered hai (pehle do baar tha, aur stub wala
+// handler pehle match hokar 200 bhej deta tha, isliye Shop.subscription
+// update hota hi nahi tha).
 app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res) => {
+  // 1) Signature verify — fail hua to 400 (ye request hi galat hai)
+  let event;
   try {
     cashfree.PGVerifyWebhookSignature(
       req.headers["x-webhook-signature"],
       req.body,
       req.headers["x-webhook-timestamp"]
     );
-    const event = JSON.parse(req.body.toString());
+    event = JSON.parse(req.body.toString());
+  } catch (err) {
+    console.error("Webhook verification failed:", err.message);
+    return res.status(400).send("Invalid signature");
+  }
+
+  // 2) Processing — fail hua to 500, taaki Cashfree webhook dobara bheje
+  try {
+    await connectToDatabase(); // cold start pe buffering timeout se bachne ke liye
+
     console.log("Verified webhook:", event.type, event.data?.order?.order_id);
 
     const order = event.data?.order;
     const payment = event.data?.payment;
 
-    // ── Sirf successful payment pe hi subscription credit karo ──────────
+    // Sirf successful payment pe hi subscription credit karo
     if (event.type === "PAYMENT_SUCCESS_WEBHOOK" && order && payment?.payment_status === "SUCCESS") {
       const PLAN_ID_MAP = { starter: "free", pro: "pro", enterprise: "premium" };
       const [shopId, planId, cycle] = (order.order_note || "").split("|");
       const mappedPlan = PLAN_ID_MAP[planId];
 
       if (shopId && mappedPlan) {
-        // Idempotency check — same order dobara process na ho
+        // Idempotency — same order dobara process na ho
         const alreadyRecorded = await Shop.exists({
           shopId,
           "subscription.renewalHistory.orderId": order.order_id,
         });
 
         if (!alreadyRecorded) {
+          // expiry: abhi plan chal raha hai to bache hue din bhi jod do
+          const existing = await Shop.findOne({ shopId }).select("subscription.expiresAt");
+          const prevExpiry = existing?.subscription?.expiresAt;
+          const base = prevExpiry && prevExpiry > new Date() ? prevExpiry : new Date();
+          const expiresAt = new Date(base.getTime() + (cycle === "yearly" ? 365 : 30) * 86400000);
+
           await Shop.findOneAndUpdate(
             { shopId },
             {
@@ -98,6 +145,7 @@ app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res)
                 "subscription.monthlyAmount": cycle === "yearly"
                   ? Math.round(order.order_amount / 12)
                   : order.order_amount,
+                "subscription.expiresAt": expiresAt,
               },
               $push: {
                 "subscription.renewalHistory": {
@@ -105,6 +153,7 @@ app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res)
                   amount: order.order_amount,
                   plan: mappedPlan,
                   orderId: order.order_id,
+                  method: (payment.payment_group || "").replace(/_/g, " ").toUpperCase(),
                 },
               },
             }
@@ -120,60 +169,19 @@ app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res)
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("Webhook verification failed:", err.message);
-    res.status(400).send("Invalid signature");
+    console.error("Webhook processing failed:", err.message);
+    res.status(500).send("Webhook processing failed");
   }
 });
 
 app.use(express.json());
 
-// ── DATABASE CONNECTION (serverless-safe: cache + reuse across invocations) ──
-// In serverless (Vercel), each cold start re-runs this file. Without caching,
-// a new connection attempt fires on every invocation, and requests that land
-// on a "connecting" instance can time out waiting (the buffering error you saw).
-// This caches the connection promise so concurrent/repeat invocations reuse it.
-let cachedConnectionPromise = null;
-
-function connectToDatabase() {
-  if (!process.env.MONGO_URI) {
-    console.log("⚠️ Using in-memory data (MONGO_URI not set)");
-    return null;
-  }
-
-  // Already connected — reuse it
-  if (mongoose.connection.readyState === 1) {
-    return Promise.resolve(mongoose.connection);
-  }
-
-  // Already connecting — reuse the in-flight promise instead of starting a new one
-  if (cachedConnectionPromise) {
-    return cachedConnectionPromise;
-  }
-
-  cachedConnectionPromise = mongoose
-    .connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 8000, // stay safely under Vercel's function limit
-      socketTimeoutMS: 45000,
-    })
-    .then((conn) => {
-      console.log("MongoDB Connected 🚀");
-      return conn;
-    })
-    .catch((err) => {
-      console.error("MongoDB Error:", err.message);
-      cachedConnectionPromise = null; // allow retry on the next request
-      throw err;
-    });
-
-  return cachedConnectionPromise;
-}
-
-// Ensure a DB connection exists before handling any /api request —
-// EXCEPT preflight (OPTIONS), which never touches the DB and must return
-// instantly or Vercel can kill the function before a CORS header goes out.
+// /api ke har request se pehle DB connection ensure karo —
+// OPTIONS (CORS preflight) ko chhodkar, wo DB touch nahi karta aur turant
+// return hona chahiye.
 app.use("/api", async (req, res, next) => {
   if (req.method === "OPTIONS") return next();
-  if (!process.env.MONGO_URI) return next(); // in-memory mode, nothing to wait for
+  if (!process.env.MONGO_URI) return next(); // in-memory mode
   try {
     await connectToDatabase();
     next();
@@ -182,8 +190,8 @@ app.use("/api", async (req, res, next) => {
   }
 });
 
-// Kick off an initial connection attempt at cold start too (non-blocking)
-connectToDatabase();
+// Cold start pe bhi initial connection attempt (non-blocking)
+connectToDatabase().catch(() => {});
 
 // ── ROUTES ─────────────────────────────────────────────────────────────
 
@@ -225,6 +233,7 @@ app.use("/api/sa-x7k9q2", superAdminRouter);
 app.use("/api/tasks", tasksRouter);
 app.use("/api/restock-orders", restockOrdersRouter);
 app.use("/api/payments", paymentsRouter); // Cashfree create-order/order-status
+app.use("/api/customer-reports", customerReportsRouter); // NAYA — shop owner/staff report submit
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
