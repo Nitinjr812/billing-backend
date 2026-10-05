@@ -523,4 +523,78 @@ router.delete("/shops/:shopId", async (req, res) => {
   }
 });
 
+
+
+// ── SHOP VERIFICATION REQUESTS ───────────────────────────────────────
+router.get("/verifications", async (req, res) => {
+  try {
+    const status = ["pending", "approved", "rejected"].includes(req.query.status) ? req.query.status : "pending";
+    const shops = await Shop.find({
+      "verification.status": status,
+      "verification.submittedAt": { $ne: null },
+    })
+      .sort({ "verification.submittedAt": status === "pending" ? 1 : -1 })
+      .limit(50)
+      .lean();
+
+    const out = await Promise.all(
+      shops.map(async (s) => {
+        const owner = await User.findById(s.ownerId).select("name email").lean();
+        return {
+          shopId: s.shopId,
+          shopName: s.shopName,
+          ownerName: owner?.name || "—",
+          ownerEmail: owner?.email || "—",
+          gstin: s.verification.gstin,
+          address: s.verification.address,
+          photos: s.verification.photos,
+          status: s.verification.status,
+          rejectReason: s.verification.rejectReason,
+          submittedAt: s.verification.submittedAt,
+          reviewedAt: s.verification.reviewedAt,
+        };
+      })
+    );
+    res.json(out);
+  } catch (err) {
+    console.error("Superadmin verifications error:", err.message);
+    res.status(500).json({ error: "Failed to fetch verification requests" });
+  }
+});
+
+router.patch("/verifications/:shopId", async (req, res) => {
+  try {
+    const { decision, reason } = req.body;
+    if (!["approve", "reject"].includes(decision)) {
+      return res.status(400).json({ error: "decision must be 'approve' or 'reject'" });
+    }
+    const approve = decision === "approve";
+
+    const shop = await Shop.findOneAndUpdate(
+      { shopId: req.params.shopId, "verification.status": "pending" },
+      {
+        $set: {
+          "verification.status": approve ? "approved" : "rejected",
+          "verification.reviewedAt": new Date(),
+          "verification.rejectReason": approve ? "" : String(reason || "").trim(),
+        },
+      },
+      { new: true }
+    );
+    if (!shop) return res.status(404).json({ error: "No pending request for this shop" });
+
+    await notifyShop(shop.shopId, {
+      title: approve ? "Your shop has been approved" : "Your shop verification was rejected",
+      message: approve
+        ? "Your shop is verified. You can now use all features."
+        : `Reason: ${reason || "Details could not be verified"}. Please resubmit your details.`,
+    });
+
+    res.json({ success: true, status: shop.verification.status });
+  } catch (err) {
+    console.error("Superadmin verification decision error:", err.message);
+    res.status(500).json({ error: "Failed to update verification" });
+  }
+});
+
 module.exports = router;
