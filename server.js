@@ -26,6 +26,7 @@ const tasksRouter = require("./routes/tasks");
 const restockOrdersRouter = require("./routes/restockOrders");
 const paymentsRouter = require("./routes/payments"); // Cashfree create-order/order-status
 const customerReportsRouter = require("./routes/customerReports"); // NAYA — shop se super-admin ko reports
+const shopVerificationRouter = require("./routes/shopVerification"); // ✅ FIX 1: import add kiya
 const Shop = require("./models/Shop");
 const app = express();
 
@@ -89,10 +90,6 @@ const cashfree = new Cashfree(
 // ── CASHFREE WEBHOOK (must come BEFORE express.json()) ──────────────────
 // Signature verification ke liye raw, unparsed body chahiye. Agar ye route
 // express.json() ke baad hota to body object ban chuki hoti aur verify fail hota.
-//
-// Ye route ab sirf EK baar registered hai (pehle do baar tha, aur stub wala
-// handler pehle match hokar 200 bhej deta tha, isliye Shop.subscription
-// update hota hi nahi tha).
 app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   // 1) Signature verify — fail hua to 400 (ye request hi galat hai)
   let event;
@@ -174,7 +171,8 @@ app.post("/api/payments/webhook", express.raw({ type: "*/*" }), async (req, res)
   }
 });
 
-app.use(express.json());
+// ✅ FIX 2: limit 5mb — shop verification photos base64 mein aati hain (default 100kb se 413 aata)
+app.use(express.json({ limit: "5mb" }));
 
 // /api ke har request se pehle DB connection ensure karo —
 // OPTIONS (CORS preflight) ko chhodkar, wo DB touch nahi karta aur turant
@@ -234,10 +232,15 @@ app.use("/api/tasks", tasksRouter);
 app.use("/api/restock-orders", restockOrdersRouter);
 app.use("/api/payments", paymentsRouter); // Cashfree create-order/order-status
 app.use("/api/customer-reports", customerReportsRouter); // NAYA — shop owner/staff report submit
+app.use("/api/shop-verification", shopVerificationRouter); // ✅ FIX 3: route mount kiya
 
 // ── ERROR HANDLING ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("Error:", err.message);
+  // body-parser ki size error ko sahi status ke saath return karo
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Photos too large, please upload smaller images" });
+  }
   res.status(500).json({ error: "Internal Server Error" });
 });
 
