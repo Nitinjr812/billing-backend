@@ -177,6 +177,85 @@ module.exports = function saSecurityRouter(requireSuperAdmin) {
     res.json({ ok: true });
   });
 
+  /* ── DATA & INSIGHTS (poori SaaS ka data) ── */
+  const INTERNAL = new Set(["sasessions", "saloginattempts", "saalerts", "sablockedips", "saudits"]);
+  const collectionNames = async () => {
+    const list = await mongoose.connection.db.listCollections({}, { nameOnly: true }).toArray();
+    return list.map((c) => c.name).filter((n) => !n.startsWith("system.")).slice(0, 80);
+  };
+
+  // Har collection ka document count + size, aur pichhle 6 mahine ke naye shops
+  r.get("/insights", async (req, res) => {
+    try {
+      const db = mongoose.connection.db;
+      const names = await collectionNames();
+      const collections = await Promise.all(names.map(async (name) => {
+        const col = db.collection(name);
+        let count = 0, size = 0, storage = 0;
+        try { count = await col.estimatedDocumentCount(); } catch { /* ignore */ }
+        try {
+          const [st] = await col.aggregate([{ $collStats: { storageStats: {} } }]).toArray();
+          size = st?.storageStats?.size || 0;
+          storage = st?.storageStats?.storageSize || 0;
+        } catch { /* $collStats allowed nahi to size skip */ }
+        return { name, count, size, storage, internal: INTERNAL.has(name) };
+      }));
+      collections.sort((a, b) => b.count - a.count);
+
+      // naye shops per month (ObjectId ke timestamp se — createdAt field ki zaroorat nahi)
+      let signupsByMonth = [];
+      try {
+        const Shop = require("../models/Shop");
+        const since = new Date();
+        since.setUTCMonth(since.getUTCMonth() - 5, 1);
+        since.setUTCHours(0, 0, 0, 0);
+        const rows = await Shop.aggregate([
+          { $addFields: { _d: { $toDate: "$_id" } } },
+          { $match: { _d: { $gte: since } } },
+          { $group: { _id: { y: { $year: "$_d" }, m: { $month: "$_d" } }, count: { $sum: 1 } } },
+        ]);
+        const key = (y, m) => `${y}-${m}`;
+        const map = new Map(rows.map((x) => [key(x._id.y, x._id.m), x.count]));
+        for (let i = 0; i < 6; i++) {
+          const d = new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth() + i, 1));
+          signupsByMonth.push({
+            month: d.toLocaleString("en-US", { month: "short", timeZone: "UTC" }),
+            count: map.get(key(d.getUTCFullYear(), d.getUTCMonth() + 1)) || 0,
+          });
+        }
+      } catch (e) { signupsByMonth = []; }
+
+      res.json({
+        collections,
+        totals: {
+          documents: collections.reduce((s, c) => s + c.count, 0),
+          size: collections.reduce((s, c) => s + c.size, 0),
+        },
+        signupsByMonth,
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Ek shop ka data: kis collection me uske kitne records hain (shopId se)
+  r.get("/insights/shop/:shopId", async (req, res) => {
+    try {
+      const shopId = String(req.params.shopId || "").slice(0, 100);
+      const db = mongoose.connection.db;
+      const names = (await collectionNames()).filter((n) => !INTERNAL.has(n));
+      const rows = await Promise.all(names.map(async (name) => {
+        try {
+          const count = await db.collection(name).countDocuments({ shopId });
+          return count ? { name, count } : null;
+        } catch { return null; }
+      }));
+      res.json({ shopId, collections: rows.filter(Boolean).sort((a, b) => b.count - a.count) });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   /* ── AUDIT LOG ── */
   r.get("/audit", async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 200, 500);
