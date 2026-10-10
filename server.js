@@ -21,22 +21,15 @@ const invoicesRoute = require("./routes/invoices");
 const suppliersRoute = require("./routes/suppliers");
 const notificationsRoute = require("./routes/notifications");
 const supplierPurchasesRouter = require("./routes/supplierPurchases");
+const superAdminRouter = require("./routes/superadmin");
 const tasksRouter = require("./routes/tasks");
 const restockOrdersRouter = require("./routes/restockOrders");
 const paymentsRouter = require("./routes/payments"); // Cashfree create-order/order-status
 const customerReportsRouter = require("./routes/customerReports"); // shop se super-admin ko reports
 const shopVerificationRouter = require("./routes/shopVerification");
+const saSecurityRouter = require("./routes/saSecurity"); // NEW — db-status, sessions, alerts, audit
+const { saTracker } = require("./lib/saSecurity"); // NEW — session/IP tracking + auto audit
 const Shop = require("./models/Shop");
-
-// ── SUPER ADMIN ─────────────────────────────────────────────────────────
-// NOTE: routes/superadmin.js se `requireSuperAdmin` middleware export hona chahiye:
-//   module.exports = router;  module.exports.requireSuperAdmin = requireSuperAdmin;
-// (agar abhi export nahi hai to wahan add kar do — niche guard hai, crash nahi hoga)
-const superAdminModule = require("./routes/superadmin");
-const superAdminRouter = superAdminModule.router || superAdminModule;
-const requireSuperAdmin = superAdminModule.requireSuperAdmin;
-const saSecurityRouterFactory = require("./routes/saSecurity");
-
 const app = express();
 
 // Vercel/proxy ke peeche asli client IP (sessions + suspicious-login detection ke liye)
@@ -240,13 +233,9 @@ app.use("/api/notifications", notificationsRoute);
 app.use("/api/supplier-purchases", supplierPurchasesRouter);
 app.use("/api/discount-permissions", discountPermissionsRoute);
 
-// ── SUPER ADMIN: security router (db-status, sessions, alerts, audit) ──
-// superAdminRouter se PEHLE mount hona zaroori hai.
-if (typeof requireSuperAdmin === "function") {
-  app.use("/api/sa-x7k9q2/security", saSecurityRouterFactory(requireSuperAdmin));
-} else {
-  console.warn("⚠️ requireSuperAdmin export nahi mila — super-admin security routes mount nahi hue (routes/superadmin.js me export add karo)");
-}
+// ── SUPER ADMIN (order important: tracker -> security -> existing router) ──
+app.use("/api/sa-x7k9q2", saTracker); // IP/device sessions, force-logout check, auto audit, failed-login log
+app.use("/api/sa-x7k9q2/security", saSecurityRouter()); // db-status, sessions, alerts, audit
 app.use("/api/sa-x7k9q2", superAdminRouter);
 
 app.use("/api/tasks", tasksRouter);
