@@ -3,12 +3,14 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const {
-  SaSession, SaAlert, SaAudit, logAudit, getToken, hashToken, registerSession,
+  SaSession, SaAlert, SaAudit, SaLoginAttempt, SaBlockedIp,
+  logAudit, getToken, getIp, hashToken, registerSession, blockIp,
 } = require("../lib/saSecurity");
 
 const STATES = { 0: "disconnected", 1: "connected", 2: "connecting", 3: "disconnecting" };
+const IP_RE = /^[0-9a-fA-F:.]{3,45}$/;
 
-// Built-in auth: JWT verify. Secret env me jo bhi set ho wo try hota hai.
+// Built-in auth: JWT verify. Env me jo bhi secret set ho wo try hota hai.
 function builtInGuard() {
   let jwt;
   try { jwt = require("jsonwebtoken"); } catch { jwt = null; }
@@ -30,6 +32,8 @@ function builtInGuard() {
   };
 }
 
+const activeBlocks = () => ({ $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }] });
+
 module.exports = function saSecurityRouter(requireSuperAdmin) {
   const r = express.Router();
 
@@ -40,8 +44,7 @@ module.exports = function saSecurityRouter(requireSuperAdmin) {
     try {
       const token = getToken(req);
       if (!token) return next();
-      const th = hashToken(token);
-      let s = await SaSession.findOne({ tokenHash: th }).select("revoked expiresAt");
+      const s = await SaSession.findOne({ tokenHash: hashToken(token) }).select("revoked expiresAt");
       if (s && (s.revoked || (s.expiresAt && s.expiresAt < new Date()))) {
         return res.status(401).json({ error: "Session revoked. Please log in again.", code: "SESSION_REVOKED" });
       }
@@ -87,14 +90,28 @@ module.exports = function saSecurityRouter(requireSuperAdmin) {
     res.json(out);
   });
 
+  /* ── SUMMARY (stat cards) ── */
+  r.get("/summary", async (req, res) => {
+    const now = new Date();
+    const live = { revoked: false, expiresAt: { $gt: now } };
+    const [activeSessions, suspiciousSessions, failed24h, blockedIps, openAlerts] = await Promise.all([
+      SaSession.countDocuments(live),
+      SaSession.countDocuments({ ...live, suspicious: true }),
+      SaLoginAttempt.countDocuments({ success: false, createdAt: { $gte: new Date(now - 86400000) } }),
+      SaBlockedIp.countDocuments(activeBlocks()),
+      SaAlert.countDocuments({ dismissed: false }),
+    ]);
+    res.json({ activeSessions, suspiciousSessions, failed24h, blockedIps, openAlerts });
+  });
+
   /* ── SESSIONS ── */
   r.get("/sessions", async (req, res) => {
     const list = await SaSession.find({ revoked: false, expiresAt: { $gt: new Date() } })
       .sort({ lastActiveAt: -1 }).limit(100).lean();
     res.json(list.map((s) => ({
-      _id: s._id, adminEmail: s.adminEmail, ip: s.ip, device: s.device,
+      _id: s._id, adminEmail: s.adminEmail, ip: s.ip, country: s.country, city: s.city, device: s.device,
       createdAt: s.createdAt, lastActiveAt: s.lastActiveAt,
-      suspicious: s.suspicious, reasons: s.reasons || [],
+      risk: s.risk || 0, riskLevel: s.riskLevel || "low", suspicious: s.suspicious, reasons: s.reasons || [],
       isCurrent: String(s._id) === req.saSid,
     })));
   });
@@ -128,6 +145,35 @@ module.exports = function saSecurityRouter(requireSuperAdmin) {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "Invalid alert id" });
     await SaAlert.findByIdAndUpdate(req.params.id, { dismissed: true });
     await logAudit(req, "alert.dismiss", { targetType: "alert", targetId: req.params.id });
+    res.json({ ok: true });
+  });
+
+  /* ── LOGIN HISTORY ── */
+  r.get("/logins", async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 30, 100);
+    res.json(await SaLoginAttempt.find().sort({ createdAt: -1 }).limit(limit).lean());
+  });
+
+  /* ── BLOCKED IPs ── */
+  r.get("/blocked-ips", async (req, res) => {
+    res.json(await SaBlockedIp.find(activeBlocks()).sort({ createdAt: -1 }).limit(100).lean());
+  });
+
+  r.post("/blocked-ips", async (req, res) => {
+    const ip = String(req.body?.ip || "").trim();
+    if (!IP_RE.test(ip)) return res.status(400).json({ error: "Valid IP address daalo" });
+    if (ip === getIp(req)) return res.status(400).json({ error: "Aap apna current IP block nahi kar sakte (khud lock ho jaoge)" });
+    const reason = String(req.body?.reason || "Blocked from dashboard").slice(0, 200);
+    await blockIp(ip, { reason, blockedBy: req.admin?.email || "superadmin" });
+    await logAudit(req, "ip.block", { targetType: "ip", targetId: ip, meta: { reason } });
+    res.json({ ok: true });
+  });
+
+  r.delete("/blocked-ips/:id", async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "Invalid id" });
+    const b = await SaBlockedIp.findByIdAndDelete(req.params.id);
+    if (!b) return res.status(404).json({ error: "Not found" });
+    await logAudit(req, "ip.unblock", { targetType: "ip", targetId: b.ip });
     res.json({ ok: true });
   });
 
