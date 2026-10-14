@@ -66,28 +66,66 @@ If any required field (name, price, stock) is genuinely missing from the text, s
 
 // ── STEP 2: Save confirmed product (after user reviews/edits) ────────────
 router.post("/confirm", async (req, res) => {
-  const { name, price, costPrice, stock, category } = req.body;
-
-  if (!name || price == null || stock == null) {
-    return res.status(400).json({ error: "Name, price, and stock are required" });
-  }
-
   try {
-    const productId = "prod_" + Date.now();
+    const { shopId } = req.user; // ── shop-scoped, same as routes/products.js ──
+    const { name, category } = req.body;
+
+    const price = Number(req.body.price);
+    const stock = Number(req.body.stock);
+    const costPrice =
+      req.body.costPrice == null || req.body.costPrice === ""
+        ? price
+        : Number(req.body.costPrice);
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: "Product name is required" });
+    }
+    if (req.body.price == null || req.body.price === "" || Number.isNaN(price) || price < 0) {
+      return res.status(400).json({ error: "A valid price is required" });
+    }
+    if (req.body.stock == null || req.body.stock === "" || Number.isNaN(stock) || stock < 0) {
+      return res.status(400).json({ error: "A valid stock quantity is required" });
+    }
+
+    const cleanName = String(name).trim();
+
+    // Duplicate name check — within the SAME shop only (matches products.js)
+    const escaped = cleanName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const existing = await Product.findOne({
+      shopId,
+      name: { $regex: `^${escaped}$`, $options: "i" },
+    }).lean();
+    if (existing) {
+      return res.status(400).json({
+        error: `"${cleanName}" already exists (SKU: ${existing.productId}). Edit it instead of adding a duplicate.`,
+      });
+    }
+
+    const productId =
+      "prod_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
 
     const product = await Product.create({
       productId,
-      name,
+      shopId,
+      name: cleanName,
       price,
+      costPrice: Number.isNaN(costPrice) ? price : costPrice,
       category: ALLOWED_CATEGORIES.includes(category) ? category : "Home Goods",
       stock,
       growthPercent: 0,
     });
 
-    res.json({ success: true, product });
+    res.status(201).json({ success: true, product });
   } catch (err) {
-    console.error("Voice confirm save error:", err.message);
-    res.status(500).json({ error: "Failed to save product" });
+    console.error("Voice confirm save error:", err.stack || err.message);
+    if (err.code === 11000) {
+      return res.status(400).json({ error: "A product with this SKU already exists in your shop." });
+    }
+    // ValidationError / CastError are the client's data problem, not a server crash
+    if (err.name === "ValidationError" || err.name === "CastError") {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: err.message || "Failed to save product" });
   }
 });
 
